@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 	"github.com/example/logpipeline/internal/domain"
 	httpapi "github.com/example/logpipeline/internal/http"
 	"github.com/example/logpipeline/internal/metrics"
+	"github.com/example/logpipeline/internal/profileutil"
 	"github.com/example/logpipeline/internal/queue"
 	"github.com/example/logpipeline/internal/service"
 	"github.com/example/logpipeline/internal/storage"
@@ -35,6 +38,7 @@ func main() {
 
 	logger := log.New(os.Stdout, "logpipeline ", log.LstdFlags|log.LUTC)
 	metrics.Init()
+	maybeStartPprof(logger)
 
 	var fileCfg *config.Config
 	var err error
@@ -63,93 +67,113 @@ func main() {
 		kafkaSettings = &fileCfg.Kafka
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	run := func() error {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
 
-	store := storage.NewFileLogStore(logsDirVal, logger)
-	var (
-		queueImpl domain.LogQueue
-		mode      service.PipelineMode = service.ModeDirect
-		closer    func() error
-	)
+		store := storage.NewFileLogStore(logsDirVal, logger)
+		var (
+			queueImpl domain.LogQueue
+			mode      service.PipelineMode = service.ModeDirect
+			closer    func() error
+		)
 
-	if version == 2 {
-		mode = service.ModeQueue
-		var kafkaQueue *queue.KafkaLogQueue
-		if kafkaSettings != nil && len(kafkaSettings.Brokers) > 0 {
-			batchTimeout, err := kafkaSettings.KafkaBatchTimeout(time.Second)
+		if version == 2 {
+			mode = service.ModeQueue
+			var kafkaQueue *queue.KafkaLogQueue
+			if kafkaSettings != nil && len(kafkaSettings.Brokers) > 0 {
+				batchTimeout, err := kafkaSettings.KafkaBatchTimeout(time.Second)
+				if err != nil {
+					return fmt.Errorf("invalid kafka batch timeout: %w", err)
+				}
+				kafkaQueue, err = queue.NewKafkaLogQueue(queue.KafkaConfig{
+					Brokers:        kafkaSettings.Brokers,
+					Topic:          kafkaSettings.Topic,
+					GroupID:        kafkaSettings.GroupID,
+					BatchSize:      kafkaSettings.BatchSize,
+					BatchTimeout:   batchTimeout,
+					Consumers:      kafkaSettings.Consumers,
+					RequireAllAcks: kafkaSettings.RequireAllAcks,
+				}, logger)
+			} else {
+				kafkaQueue, err = createKafkaQueueFromEnv(logger)
+			}
 			if err != nil {
-				logger.Fatalf("invalid kafka batch timeout: %v", err)
+				return fmt.Errorf("configure kafka: %w", err)
 			}
-			kafkaQueue, err = queue.NewKafkaLogQueue(queue.KafkaConfig{
-				Brokers:        kafkaSettings.Brokers,
-				Topic:          kafkaSettings.Topic,
-				GroupID:        kafkaSettings.GroupID,
-				BatchSize:      kafkaSettings.BatchSize,
-				BatchTimeout:   batchTimeout,
-				Consumers:      kafkaSettings.Consumers,
-				RequireAllAcks: kafkaSettings.RequireAllAcks,
-			}, logger)
+			queueImpl = kafkaQueue
+			closer = kafkaQueue.Close
+
+			consumeCtx, consumeCancel := context.WithCancel(ctx)
+			defer consumeCancel()
+			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, rec domain.LogRecord) {
+				if err := store.SaveBatch(c, []domain.LogRecord{rec}); err != nil {
+					metrics.IncIngestErrors()
+					logger.Printf("consumer failed to persist log: %v", err)
+					return
+				}
+				metrics.AddLogsIngested(1)
+			}); err != nil {
+				return fmt.Errorf("start kafka consumers: %w", err)
+			}
 		} else {
-			kafkaQueue, err = createKafkaQueueFromEnv(logger)
+			queueImpl = queue.NoopQueue{}
 		}
-		if err != nil {
-			logger.Fatalf("failed to configure Kafka: %v", err)
-		}
-		queueImpl = kafkaQueue
-		closer = kafkaQueue.Close
 
-		consumeCtx, consumeCancel := context.WithCancel(ctx)
-		defer consumeCancel()
-		if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, rec domain.LogRecord) {
-			if err := store.SaveBatch(c, []domain.LogRecord{rec}); err != nil {
-				metrics.IncIngestErrors()
-				logger.Printf("consumer failed to persist log: %v", err)
-				return
+		if closer != nil {
+			defer closer()
+		}
+
+		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, logger)
+
+		aggSvc := service.NewAggregationService(logsDirVal, analyticsDirVal, aggIntervalVal, logger)
+		aggSvc.Start(ctx)
+
+		mux := http.NewServeMux()
+		handler := httpapi.NewHandler(ingestionSvc, logger)
+		handler.RegisterRoutes(mux)
+		mux.Handle("/metrics", promhttp.Handler())
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		})
+
+		server := &http.Server{
+			Addr:    srvAddr,
+			Handler: mux,
+		}
+
+		go func() {
+			logger.Printf("server listening on %s (version=%d)", srvAddr, version)
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Fatalf("server error: %v", err)
 			}
-			metrics.AddLogsIngested(1)
-		}); err != nil {
-			logger.Fatalf("failed to start Kafka consumers: %v", err)
+		}()
+
+		<-ctx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Printf("graceful shutdown failed: %v", err)
 		}
+		return nil
+	}
+
+	var runErr error
+	if captureProfiles() {
+		profileName := strings.TrimSpace(os.Getenv("PROFILE_NAME"))
+		if profileName == "" {
+			profileName = fmt.Sprintf("version%d", version)
+		}
+		dir := getEnv("PROFILE_DIR", "profiles")
+		logger.Printf("profiling enabled; CPU/heap profiles under %s", dir)
+		runErr = profileutil.WithProfiling(dir, profileName, logger, run)
 	} else {
-		queueImpl = queue.NoopQueue{}
+		runErr = run()
 	}
 
-	if closer != nil {
-		defer closer()
-	}
-
-	ingestionSvc := service.NewIngestionService(store, queueImpl, mode, logger)
-
-	aggSvc := service.NewAggregationService(logsDirVal, analyticsDirVal, aggIntervalVal, logger)
-	aggSvc.Start(ctx)
-
-	mux := http.NewServeMux()
-	handler := httpapi.NewHandler(ingestionSvc, logger)
-	handler.RegisterRoutes(mux)
-	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-
-	server := &http.Server{
-		Addr:    srvAddr,
-		Handler: mux,
-	}
-
-	go func() {
-		logger.Printf("server listening on %s (version=%d)", srvAddr, version)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatalf("server error: %v", err)
-		}
-	}()
-
-	<-ctx.Done()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("graceful shutdown failed: %v", err)
+	if runErr != nil {
+		logger.Fatalf("server exited with error: %v", runErr)
 	}
 }
 
@@ -212,4 +236,47 @@ func getDurationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func maybeStartPprof(logger *log.Logger) {
+	if !profileEnabled() {
+		return
+	}
+	addr := getEnv("PROFILE_ADDR", ":6060")
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		logger.Printf("pprof server listening on %s", addr)
+		if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Printf("pprof server error: %v", err)
+		}
+	}()
+}
+
+func profileEnabled() bool {
+	val := strings.TrimSpace(os.Getenv("PROFILE_ENABLED"))
+	if val == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		return false
+	}
+	return b
+}
+
+func captureProfiles() bool {
+	val := strings.TrimSpace(os.Getenv("PROFILE_CAPTURE"))
+	if val == "" {
+		return false
+	}
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		return false
+	}
+	return b
 }

@@ -12,6 +12,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 - [Requirement Fulfillment](#requirement-fulfillment)
 - [Usage](#usage)
 - [Testing & Load](#testing--load)
+- [Profiling](#profiling)
 - [System Architecture (Mermaid)](#system-architecture-mermaid)
 - [Future Work](#future-work)
 
@@ -117,6 +118,45 @@ make stack-down
 ## Testing & Load
 - `make test` → `go test ./...` (unit tests for ingestion mode routing and aggregation summarization).
 - `make loadtest-v1` / `make loadtest-v2` → run `hey` against each version. Adjust `testdata/sample_logs.json` timestamps to current UTC hour if you want immediate aggregation output.
+
+## Profiling
+
+There are two options:
+
+1. **Automatic capture via env-controlled profiling** – wrap the entire server lifecycle and write CPU/heap profiles to disk.
+2. **Live pprof server** – expose `/debug/pprof/**` endpoints for ad-hoc sampling.
+
+### 1. Automatic capture
+
+Set `PROFILE_CAPTURE=1` (optionally `PROFILE_NAME`, `PROFILE_DIR`) to enable code-driven CPU/heap/goroutine profiles. Use the provided make targets:
+
+```bash
+make capture-profile-v1   # runs version 1, writes profiles/cpu_v1.prof, heap_v1.prof, goroutine_v1.prof
+make capture-profile-v2   # runs version 2, writes profiles/cpu_v2.prof, heap_v2.prof, goroutine_v2.prof
+```
+
+Drive load while the server runs (e.g., `make loadtest-v1` / `make loadtest-v2`), then stop the server (Ctrl+C). Profiles are saved under `profiles/`. Inspect or compare them with:
+
+```bash
+make profile-ui-cpu-v1        # serves latest v1 CPU profile at http://localhost:8085
+make profile-ui-cpu-v2        # serves latest v2 CPU profile at http://localhost:8086
+make profile-ui-cpu-compare   # compares CPU profiles at http://localhost:8087
+make profile-ui-heap-compare  # compares heap profiles at http://localhost:8088
+make profile-ui-goroutine-compare # compares goroutine profiles at http://localhost:8089
+```
+
+### 2. Live pprof server
+
+For on-demand sampling, enable the HTTP profiler: `PROFILE_ENABLED=1 PROFILE_ADDR=:6062 ./bin/server ...`. Or use the helpers:
+
+```bash
+make profile-run-v1          # starts v1 with pprof server (default :6062)
+make profile-run-v2          # starts v2 with pprof server (default :6063)
+```
+
+Then run the `profile-*` curl-based targets to capture individual CPU/heap/goroutine snapshots as before.
+
+These commands invoke `go tool pprof` against the running pprof server (defaults to `http://localhost:6062` for v1, `:6063` for v2). Adjust `PPROF_ADDR_V1`, `PPROF_ADDR_V2`, or `PPROF_SECONDS` in the Makefile/command line if you need different ports or sampling windows.
 
 ## System Architecture (Mermaid)
 ```mermaid
