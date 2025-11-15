@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "logpipeline"
+    static_configs:
+      - targets: ["app-v1:8082", "app-v2:8083"]

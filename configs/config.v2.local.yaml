@@ -1,0 +1,17 @@
+version: 2
+server:
+  addr: ":8083"
+storage:
+  logsDir: "./logs"
+  analyticsDir: "./analytics"
+aggregation:
+  interval: 30s
+kafka:
+  brokers:
+    - localhost:19092
+  topic: logs
+  groupID: logs-consumer-group
+  batchSize: 100
+  batchTimeout: 1s
+  consumers: 1
+  requireAllAcks: true

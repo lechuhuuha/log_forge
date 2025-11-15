@@ -1,0 +1,16 @@
+version: 1
+server:
+  addr: ":8082"
+storage:
+  logsDir: "/data/v1/logs"
+  analyticsDir: "/data/v1/analytics"
+aggregation:
+  interval: 30s
+kafka:
+  brokers: []
+  topic: logs
+  groupID: logs-consumer-group
+  batchSize: 100
+  batchTimeout: 1s
+  consumers: 1
+  requireAllAcks: false

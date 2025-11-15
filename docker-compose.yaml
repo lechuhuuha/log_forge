@@ -1,0 +1,64 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    environment:
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    ports:
+      - "19092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  app-v1:
+    build:
+      context: .
+    container_name: app-v1
+    command: ["/app/server", "-config=/config/config.v1.yaml"]
+    volumes:
+      - ./configs:/config:ro
+      - ./data/v1/logs:/data/v1/logs
+      - ./data/v1/analytics:/data/v1/analytics
+    ports:
+      - "8082:8082"
+
+  app-v2:
+    build:
+      context: .
+    container_name: app-v2
+    command: ["/app/server", "-config=/config/config.v2.yaml"]
+    volumes:
+      - ./configs:/config:ro
+      - ./data/v2/logs:/data/v2/logs
+      - ./data/v2/analytics:/data/v2/analytics
+    depends_on:
+      - kafka
+    ports:
+      - "8083:8083"
+
+volumes:
+  kafka_data:
