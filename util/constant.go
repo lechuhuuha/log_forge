@@ -36,3 +36,8 @@ const (
 	DefaultKafkaBatchTimeout   = time.Second
 	DefaultKafkaConsumers      = 1
 )
+
+const (
+	DateLayout = "2006-01-02"
+	HourLayout = "15"
+)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/util"
 )
 
 // FileLogStore persists logs to disk using an hourly NDJSON layout.
@@ -45,8 +46,8 @@ func (s *FileLogStore) SaveBatch(ctx context.Context, records []domain.LogRecord
 		}
 		t := rec.Timestamp.UTC()
 		rec.Timestamp = t
-		dateDir := t.Format("2006-01-02")
-		hourFile := fmt.Sprintf("%s.log.json", t.Format("15"))
+		dateDir := t.Format(util.DateLayout)
+		hourFile := fmt.Sprintf("%s.log.json", t.Format(util.HourLayout))
 		filePath := filepath.Join(s.baseDir, dateDir, hourFile)
 		grouped[filePath] = append(grouped[filePath], rec)
 	}

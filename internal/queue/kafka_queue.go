@@ -13,19 +13,6 @@ import (
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
-// NoopQueue is used in Version 1 where no queue is needed.
-type NoopQueue struct{}
-
-// EnqueueBatch is a no-op for Version 1.
-func (NoopQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord) error {
-	return nil
-}
-
-// StartConsumers is a no-op for Version 1.
-func (NoopQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.LogRecord)) error {
-	return nil
-}
-
 // KafkaLogQueue implements LogQueue backed by Kafka.
 type KafkaLogQueue struct {
 	writer      *kafka.Writer

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/util"
 )
 
 func TestAggregationServiceAggregateHour(t *testing.T) {
@@ -16,7 +17,7 @@ func TestAggregationServiceAggregateHour(t *testing.T) {
 	analyticsDir := filepath.Join(logsDir, "analytics")
 
 	hour := time.Date(2025, 11, 15, 14, 30, 0, 0, time.UTC)
-	dateDir := filepath.Join(logsDir, hour.Format("2006-01-02"))
+	dateDir := filepath.Join(logsDir, hour.Format(util.DateLayout))
 	if err := os.MkdirAll(dateDir, 0o755); err != nil {
 		t.Fatalf("failed to create log dir: %v", err)
 	}

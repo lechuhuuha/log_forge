@@ -12,6 +12,7 @@ import (
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/util"
 )
 
 // AggregationService periodically summarizes ingested logs.
@@ -76,8 +77,8 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 	}
 
 	hourStart := ts.UTC().Truncate(time.Hour)
-	dateDir := hourStart.Format("2006-01-02")
-	hourFile := fmt.Sprintf("%s.log.json", hourStart.Format("15"))
+	dateDir := hourStart.Format(util.DateLayout)
+	hourFile := fmt.Sprintf("%s.log.json", hourStart.Format(util.HourLayout))
 	filePath := filepath.Join(a.logsDir, dateDir, hourFile)
 
 	file, err := os.Open(filePath)
@@ -122,7 +123,7 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 		return fmt.Errorf("create analytics directory: %w", err)
 	}
 
-	summaryPath := filepath.Join(a.analyticsDir, fmt.Sprintf("summary_%s.json", hourStart.Format("15")))
+	summaryPath := filepath.Join(a.analyticsDir, fmt.Sprintf("summary_%s.json", hourStart.Format(util.HourLayout)))
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal summary: %w", err)
