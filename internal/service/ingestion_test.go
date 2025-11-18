@@ -2,12 +2,11 @@ package service
 
 import (
 	"context"
-	"io"
-	"log"
 	"testing"
 	"time"
 
 	"github.com/example/logpipeline/internal/domain"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 type mockStore struct {
@@ -44,7 +43,7 @@ func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Con
 
 func TestIngestionService_DirectModeUsesStore(t *testing.T) {
 	store := &mockStore{}
-	svc := NewIngestionService(store, nil, ModeDirect, log.New(io.Discard, "", 0))
+	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop())
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/home",
@@ -61,7 +60,7 @@ func TestIngestionService_DirectModeUsesStore(t *testing.T) {
 
 func TestIngestionService_QueueModeUsesQueue(t *testing.T) {
 	q := &mockQueue{}
-	svc := NewIngestionService(nil, q, ModeQueue, log.New(io.Discard, "", 0))
+	svc := NewIngestionService(nil, q, ModeQueue, loggerpkg.NewNop())
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/api",
@@ -78,7 +77,7 @@ func TestIngestionService_QueueModeUsesQueue(t *testing.T) {
 
 func TestIngestionService_PropagatesErrors(t *testing.T) {
 	store := &mockStore{err: context.DeadlineExceeded}
-	svc := NewIngestionService(store, nil, ModeDirect, log.New(io.Discard, "", 0))
+	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop())
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/error",

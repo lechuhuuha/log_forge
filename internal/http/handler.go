@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,20 +13,21 @@ import (
 	"github.com/example/logpipeline/internal/domain"
 	"github.com/example/logpipeline/internal/metrics"
 	"github.com/example/logpipeline/internal/service"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 // Handler wires HTTP endpoints to services.
 type Handler struct {
 	ingestion *service.IngestionService
-	logger    *log.Logger
+	logger    loggerpkg.Logger
 }
 
 // NewHandler builds the HTTP handler set.
-func NewHandler(ingestion *service.IngestionService, logger *log.Logger) *Handler {
-	if logger == nil {
-		logger = log.Default()
+func NewHandler(ingestion *service.IngestionService, logr loggerpkg.Logger) *Handler {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
 	}
-	return &Handler{ingestion: ingestion, logger: logger}
+	return &Handler{ingestion: ingestion, logger: logr}
 }
 
 // RegisterRoutes attaches the HTTP endpoints to the provided mux.
@@ -50,7 +50,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ingestion.ProcessBatch(r.Context(), records); err != nil {
-		h.logger.Printf("failed to process logs: %v", err)
+		h.logger.Error("failed to process logs", loggerpkg.F("error", err))
 		http.Error(w, "failed to process logs", http.StatusInternalServerError)
 		return
 	}

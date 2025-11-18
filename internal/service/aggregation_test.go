@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 func TestAggregationServiceAggregateHour(t *testing.T) {
@@ -29,7 +29,7 @@ func TestAggregationServiceAggregateHour(t *testing.T) {
 		t.Fatalf("failed to seed log file: %v", err)
 	}
 
-	agg := NewAggregationService(logsDir, analyticsDir, time.Minute, log.New(io.Discard, "", 0))
+	agg := NewAggregationService(logsDir, analyticsDir, time.Minute, loggerpkg.NewNop())
 	if err := agg.AggregateHour(context.Background(), hour); err != nil {
 		t.Fatalf("AggregateHour returned error: %v", err)
 	}

@@ -5,15 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.uber.org/zap"
 
 	"github.com/example/logpipeline/internal/config"
 	"github.com/example/logpipeline/internal/domain"
@@ -23,6 +22,7 @@ import (
 	"github.com/example/logpipeline/internal/queue"
 	"github.com/example/logpipeline/internal/service"
 	"github.com/example/logpipeline/internal/storage"
+	loggerpkg "github.com/example/logpipeline/logger"
 	"github.com/example/logpipeline/util"
 )
 
@@ -35,16 +35,21 @@ func main() {
 	configPath := flag.String("config", "", "Path to YAML config file (overrides related flags)")
 	flag.Parse()
 
-	logger := log.New(os.Stdout, "logpipeline ", log.LstdFlags|log.LUTC)
+	baseZap, err := zap.NewProduction()
+	if err != nil {
+		panic(fmt.Sprintf("failed to init logger: %v", err))
+	}
+	defer func() { _ = baseZap.Sync() }()
+	logger := loggerpkg.NewZapLogger(baseZap)
+
 	metrics.Init()
 	util.MaybeStartPprof(logger)
 
 	var fileCfg *config.Config
-	var err error
 	if strings.TrimSpace(*configPath) != "" {
 		fileCfg, err = config.Load(*configPath)
 		if err != nil {
-			logger.Fatalf("failed to load config file: %v", err)
+			logger.Fatal("failed to load config file", loggerpkg.F("error", err), loggerpkg.F("path", strings.TrimSpace(*configPath)))
 		}
 	}
 
@@ -61,7 +66,7 @@ func main() {
 		logsDirVal = fileCfg.Storage.LogsDir
 		analyticsDirVal = fileCfg.Storage.AnalyticsDir
 		if aggIntervalVal, err = fileCfg.AggregationInterval(*aggInterval); err != nil {
-			logger.Fatalf("invalid aggregation interval: %v", err)
+			logger.Fatal("invalid aggregation interval", loggerpkg.F("error", err))
 		}
 		kafkaSettings = &fileCfg.Kafka
 	}
@@ -108,7 +113,7 @@ func main() {
 			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, rec domain.LogRecord) {
 				if err := store.SaveBatch(c, []domain.LogRecord{rec}); err != nil {
 					metrics.IncIngestErrors()
-					logger.Printf("consumer failed to persist log: %v", err)
+					logger.Error("consumer failed to persist log", loggerpkg.F("error", err))
 					return
 				}
 				metrics.AddLogsIngested(1)
@@ -143,9 +148,9 @@ func main() {
 		}
 
 		go func() {
-			logger.Printf("server listening on %s (version=%d)", srvAddr, version)
+			logger.Info("server listening", loggerpkg.F("addr", srvAddr), loggerpkg.F("version", version))
 			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Fatalf("server error: %v", err)
+				logger.Fatal("server error", loggerpkg.F("error", err))
 			}
 		}()
 
@@ -153,7 +158,7 @@ func main() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Printf("graceful shutdown failed: %v", err)
+			logger.Warn("graceful shutdown failed", loggerpkg.F("error", err))
 		}
 		return nil
 	}
@@ -162,13 +167,13 @@ func main() {
 	if util.CaptureProfiles() {
 		profileName := util.GetEnv(util.ProfileName, fmt.Sprintf("version%d", version))
 		dir := util.GetEnv(util.ProfileDir, util.DefaultProfileDir)
-		logger.Printf("profiling enabled; CPU/heap profiles under %s", dir)
+		logger.Info("profiling enabled", loggerpkg.F("dir", dir), loggerpkg.F("profile", profileName))
 		runErr = profileutil.WithProfiling(dir, profileName, logger, run)
 	} else {
 		runErr = run()
 	}
 
 	if runErr != nil {
-		logger.Fatalf("server exited with error: %v", runErr)
+		logger.Fatal("server exited with error", loggerpkg.F("error", runErr))
 	}
 }

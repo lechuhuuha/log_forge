@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/example/logpipeline/internal/domain"
 	"github.com/example/logpipeline/internal/metrics"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 // AggregationService periodically summarizes ingested logs.
@@ -19,19 +19,19 @@ type AggregationService struct {
 	logsDir      string
 	analyticsDir string
 	interval     time.Duration
-	logger       *log.Logger
+	logger       loggerpkg.Logger
 }
 
 // NewAggregationService builds a new aggregator instance.
-func NewAggregationService(logsDir, analyticsDir string, interval time.Duration, logger *log.Logger) *AggregationService {
-	if logger == nil {
-		logger = log.Default()
+func NewAggregationService(logsDir, analyticsDir string, interval time.Duration, logr loggerpkg.Logger) *AggregationService {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
 	}
 	return &AggregationService{
 		logsDir:      logsDir,
 		analyticsDir: analyticsDir,
 		interval:     interval,
-		logger:       logger,
+		logger:       logr,
 	}
 }
 
@@ -57,7 +57,7 @@ func (a *AggregationService) Start(ctx context.Context) {
 
 func (a *AggregationService) runOnce(ctx context.Context) {
 	if err := a.AggregateCurrentHour(ctx); err != nil {
-		a.logger.Printf("aggregation run failed: %v", err)
+		a.logger.Error("aggregation run failed", loggerpkg.F("error", err))
 	}
 	metrics.IncAggregationRuns()
 }
@@ -102,7 +102,7 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 		}
 		var rec domain.LogRecord
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			a.logger.Printf("skip malformed log record: %v", err)
+			a.logger.Warn("skip malformed log record", loggerpkg.F("error", err))
 			continue
 		}
 		requestsPerPath[rec.Path]++

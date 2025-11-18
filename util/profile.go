@@ -2,15 +2,19 @@ package util
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
+
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
-func MaybeStartPprof(logger *log.Logger) {
+func MaybeStartPprof(logger loggerpkg.Logger) {
+	if logger == nil {
+		logger = loggerpkg.NewNop()
+	}
 	if !ProfileEnabled() {
 		return
 	}
@@ -22,9 +26,9 @@ func MaybeStartPprof(logger *log.Logger) {
 		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		logger.Printf("pprof server listening on %s", addr)
+		logger.Info("pprof server listening", loggerpkg.F("addr", addr))
 		if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Printf("pprof server error: %v", err)
+			logger.Error("pprof server error", loggerpkg.F("error", err))
 		}
 	}()
 }

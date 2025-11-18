@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"sync"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 
 	"github.com/example/logpipeline/internal/domain"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 // NoopQueue is used in Version 1 where no queue is needed.
@@ -31,7 +31,7 @@ type KafkaLogQueue struct {
 	writer      *kafka.Writer
 	readerCfg   kafka.ReaderConfig
 	consumers   int
-	logger      *log.Logger
+	logger      loggerpkg.Logger
 	closeWriter sync.Once
 }
 
@@ -47,9 +47,9 @@ type KafkaConfig struct {
 }
 
 // NewKafkaLogQueue builds a Kafka-backed queue implementation.
-func NewKafkaLogQueue(cfg KafkaConfig, logger *log.Logger) (*KafkaLogQueue, error) {
-	if logger == nil {
-		logger = log.Default()
+func NewKafkaLogQueue(cfg KafkaConfig, logr loggerpkg.Logger) (*KafkaLogQueue, error) {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
 	}
 	if len(cfg.Brokers) == 0 {
 		return nil, errors.New("kafka brokers must be provided")
@@ -97,7 +97,7 @@ func NewKafkaLogQueue(cfg KafkaConfig, logger *log.Logger) (*KafkaLogQueue, erro
 		writer:    writer,
 		readerCfg: readerCfg,
 		consumers: cfg.Consumers,
-		logger:    logger,
+		logger:    logr,
 	}, nil
 }
 
@@ -145,14 +145,14 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return
 			}
-			q.logger.Printf("kafka consumer error: %v", err)
+			q.logger.Error("kafka consumer error", loggerpkg.F("error", err))
 			// brief pause before retrying to avoid tight loop
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		var rec domain.LogRecord
 		if err := json.Unmarshal(msg.Value, &rec); err != nil {
-			q.logger.Printf("discard malformed kafka message: %v", err)
+			q.logger.Warn("discard malformed kafka message", loggerpkg.F("error", err))
 			continue
 		}
 		handler(ctx, rec)

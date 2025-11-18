@@ -4,30 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/example/logpipeline/internal/domain"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 // FileLogStore persists logs to disk using an hourly NDJSON layout.
 type FileLogStore struct {
 	baseDir   string
-	logger    *log.Logger
+	logger    loggerpkg.Logger
 	mu        sync.Mutex
 	fileLocks map[string]*sync.Mutex
 }
 
 // NewFileLogStore returns a new file-backed LogStore implementation.
-func NewFileLogStore(baseDir string, logger *log.Logger) *FileLogStore {
-	if logger == nil {
-		logger = log.Default()
+func NewFileLogStore(baseDir string, logr loggerpkg.Logger) *FileLogStore {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
 	}
 	return &FileLogStore{
 		baseDir:   baseDir,
-		logger:    logger,
+		logger:    logr,
 		fileLocks: make(map[string]*sync.Mutex),
 	}
 }

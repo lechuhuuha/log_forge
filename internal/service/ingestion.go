@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"errors"
-	"log"
 
 	"github.com/example/logpipeline/internal/domain"
 	"github.com/example/logpipeline/internal/metrics"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 // PipelineMode determines how ingestion behaves.
@@ -24,19 +24,19 @@ type IngestionService struct {
 	store  domain.LogStore
 	queue  domain.LogQueue
 	mode   PipelineMode
-	logger *log.Logger
+	logger loggerpkg.Logger
 }
 
 // NewIngestionService creates a new ingestion service.
-func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode PipelineMode, logger *log.Logger) *IngestionService {
-	if logger == nil {
-		logger = log.Default()
+func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode PipelineMode, logr loggerpkg.Logger) *IngestionService {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
 	}
 	return &IngestionService{
 		store:  store,
 		queue:  queue,
 		mode:   mode,
-		logger: logger,
+		logger: logr,
 	}
 }
 
@@ -58,7 +58,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 		}
 		if err := s.queue.EnqueueBatch(ctx, records); err != nil {
 			metrics.IncIngestErrors()
-			s.logger.Printf("failed to enqueue logs: %v", err)
+			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
 			return err
 		}
 		return nil
@@ -70,7 +70,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 		}
 		if err := s.store.SaveBatch(ctx, records); err != nil {
 			metrics.IncIngestErrors()
-			s.logger.Printf("failed to save logs: %v", err)
+			s.logger.Error("failed to save logs", loggerpkg.F("error", err))
 			return err
 		}
 		metrics.AddLogsIngested(len(records))

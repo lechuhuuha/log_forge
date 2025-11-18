@@ -2,13 +2,13 @@ package util
 
 import (
 	"errors"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/example/logpipeline/internal/queue"
+	loggerpkg "github.com/example/logpipeline/logger"
 )
 
 func GetEnv(key, fallback string) string {
@@ -42,7 +42,10 @@ func GetDurationEnv(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
-func CreateKafkaQueueFromEnv(logger *log.Logger) (*queue.KafkaLogQueue, error) {
+func CreateKafkaQueueFromEnv(logger loggerpkg.Logger) (*queue.KafkaLogQueue, error) {
+	if logger == nil {
+		logger = loggerpkg.NewNop()
+	}
 	brokersEnv := strings.TrimSpace(os.Getenv(KafkaBrokers))
 	if brokersEnv == "" {
 		return nil, errors.New("KAFKA_BROKERS must be set for version 2")
