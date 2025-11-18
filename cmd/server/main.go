@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,20 +23,21 @@ import (
 	"github.com/example/logpipeline/internal/queue"
 	"github.com/example/logpipeline/internal/service"
 	"github.com/example/logpipeline/internal/storage"
+	"github.com/example/logpipeline/util"
 )
 
 func main() {
-	addr := flag.String("addr", getEnv("HTTP_ADDR", ":8080"), "HTTP listen address")
-	versionFlag := flag.Int("version", getIntEnv("PIPELINE_VERSION", 1), "Pipeline version (1 or 2)")
-	logsDir := flag.String("logs-dir", getEnv("LOGS_DIR", "logs"), "Directory for raw logs")
-	analyticsDir := flag.String("analytics-dir", getEnv("ANALYTICS_DIR", "analytics"), "Directory for analytics output")
-	aggInterval := flag.Duration("aggregation-interval", getDurationEnv("AGGREGATION_INTERVAL", time.Minute), "Aggregation interval")
+	addr := flag.String("addr", util.GetEnv(util.HTTPAddr, util.DefaultHTTPAddr), "HTTP listen address")
+	versionFlag := flag.Int("version", util.GetIntEnv(util.PipelineVersion, util.DefaultPipelineVersion), "Pipeline version (1 or 2)")
+	logsDir := flag.String("logs-dir", util.GetEnv(util.LogsDir, util.DefaultLogsDir), "Directory for raw logs")
+	analyticsDir := flag.String("analytics-dir", util.GetEnv(util.AnalyticsDir, util.DefaultAnalyticsDir), "Directory for analytics output")
+	aggInterval := flag.Duration("aggregation-interval", util.GetDurationEnv(util.AggregationInterval, util.DefaultAggregationInterval), "Aggregation interval")
 	configPath := flag.String("config", "", "Path to YAML config file (overrides related flags)")
 	flag.Parse()
 
 	logger := log.New(os.Stdout, "logpipeline ", log.LstdFlags|log.LUTC)
 	metrics.Init()
-	maybeStartPprof(logger)
+	util.MaybeStartPprof(logger)
 
 	var fileCfg *config.Config
 	var err error
@@ -96,7 +95,7 @@ func main() {
 					RequireAllAcks: kafkaSettings.RequireAllAcks,
 				}, logger)
 			} else {
-				kafkaQueue, err = createKafkaQueueFromEnv(logger)
+				kafkaQueue, err = util.CreateKafkaQueueFromEnv(logger)
 			}
 			if err != nil {
 				return fmt.Errorf("configure kafka: %w", err)
@@ -160,12 +159,9 @@ func main() {
 	}
 
 	var runErr error
-	if captureProfiles() {
-		profileName := strings.TrimSpace(os.Getenv("PROFILE_NAME"))
-		if profileName == "" {
-			profileName = fmt.Sprintf("version%d", version)
-		}
-		dir := getEnv("PROFILE_DIR", "profiles")
+	if util.CaptureProfiles() {
+		profileName := util.GetEnv(util.ProfileName, fmt.Sprintf("version%d", version))
+		dir := util.GetEnv(util.ProfileDir, util.DefaultProfileDir)
 		logger.Printf("profiling enabled; CPU/heap profiles under %s", dir)
 		runErr = profileutil.WithProfiling(dir, profileName, logger, run)
 	} else {
@@ -175,108 +171,4 @@ func main() {
 	if runErr != nil {
 		logger.Fatalf("server exited with error: %v", runErr)
 	}
-}
-
-func createKafkaQueueFromEnv(logger *log.Logger) (*queue.KafkaLogQueue, error) {
-	brokersEnv := strings.TrimSpace(os.Getenv("KAFKA_BROKERS"))
-	if brokersEnv == "" {
-		return nil, errors.New("KAFKA_BROKERS must be set for version 2")
-	}
-	brokerParts := strings.Split(brokersEnv, ",")
-	brokers := make([]string, 0, len(brokerParts))
-	for _, b := range brokerParts {
-		b = strings.TrimSpace(b)
-		if b != "" {
-			brokers = append(brokers, b)
-		}
-	}
-	if len(brokers) == 0 {
-		return nil, errors.New("no valid Kafka brokers provided")
-	}
-
-	cfg := queue.KafkaConfig{
-		Brokers:        brokers,
-		Topic:          getEnv("KAFKA_TOPIC", "logs"),
-		GroupID:        getEnv("KAFKA_GROUP_ID", "logs-consumer-group"),
-		BatchSize:      getIntEnv("KAFKA_BATCH_SIZE", 100),
-		BatchTimeout:   getDurationEnv("KAFKA_BATCH_TIMEOUT", time.Second),
-		Consumers:      getIntEnv("KAFKA_CONSUMERS", 1),
-		RequireAllAcks: strings.EqualFold(os.Getenv("KAFKA_ACKS"), "all"),
-	}
-
-	return queue.NewKafkaLogQueue(cfg, logger)
-}
-
-func getEnv(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getIntEnv(key string, fallback int) int {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(val)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getDurationEnv(key string, fallback time.Duration) time.Duration {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(val)
-	if err != nil {
-		return fallback
-	}
-	return d
-}
-
-func maybeStartPprof(logger *log.Logger) {
-	if !profileEnabled() {
-		return
-	}
-	addr := getEnv("PROFILE_ADDR", ":6060")
-	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		logger.Printf("pprof server listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Printf("pprof server error: %v", err)
-		}
-	}()
-}
-
-func profileEnabled() bool {
-	val := strings.TrimSpace(os.Getenv("PROFILE_ENABLED"))
-	if val == "" {
-		return false
-	}
-	b, err := strconv.ParseBool(val)
-	if err != nil {
-		return false
-	}
-	return b
-}
-
-func captureProfiles() bool {
-	val := strings.TrimSpace(os.Getenv("PROFILE_CAPTURE"))
-	if val == "" {
-		return false
-	}
-	b, err := strconv.ParseBool(val)
-	if err != nil {
-		return false
-	}
-	return b
 }
