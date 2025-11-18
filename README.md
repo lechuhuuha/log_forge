@@ -38,7 +38,8 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 
 ## Design Decisions
 - **Packages**
-  - `cmd/server`: flag/env/config parsing, wiring, graceful shutdown.
+  - `cmd`: entrypoint wiring.
+  - `cmd/bootstrap`: CLI parsing, logger/observability wiring, and app assembly.
   - `internal/domain`: `LogRecord`, `LogStore`, `LogQueue` definitions.
   - `internal/service`: ingestion orchestration (mode-aware) and aggregation worker.
   - `internal/http`: handlers and routing.
@@ -85,7 +86,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 | `make stack-down` | tear down stack |
 | `make infra-up` | run Kafka + Prometheus only (app runs outside Docker) |
 | `make infra-down` | stop Kafka + Prometheus |
-| `make loadtest-v1` | `hey` against `http://localhost:8080/logs` (default v1 addr) |
+| `make loadtest-v1` | `hey` against `http://localhost:8082/logs` (default v1 addr) |
 | `make loadtest-v2` | `hey` against `http://localhost:8083/logs` |
 | `make kafka-topic` | idempotently create `logs` topic |
 
@@ -94,7 +95,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 make run-v1
 curl -X POST -H "Content-Type: application/json" \
      -d @testdata/sample_logs.json \
-     http://localhost:8080/logs
+     http://localhost:8082/logs
 ```
 Hourly files: `logs/YYYY-MM-DD/HH.log.json`, analytics: `analytics/summary_HH.json`.
 

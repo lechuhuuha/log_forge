@@ -23,7 +23,7 @@ const (
 )
 
 const (
-	DefaultHTTPAddr            = ":8080"
+	DefaultHTTPAddr            = ":8082"
 	DefaultPipelineVersion     = 1
 	DefaultLogsDir             = "logs"
 	DefaultAnalyticsDir        = "analytics"

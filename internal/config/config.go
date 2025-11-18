@@ -64,7 +64,7 @@ func (c *Config) applyDefaults() {
 		c.Version = 1
 	}
 	if strings.TrimSpace(c.Server.Addr) == "" {
-		c.Server.Addr = ":8080"
+		c.Server.Addr = ":8082"
 	}
 	if strings.TrimSpace(c.Storage.LogsDir) == "" {
 		c.Storage.LogsDir = "logs"

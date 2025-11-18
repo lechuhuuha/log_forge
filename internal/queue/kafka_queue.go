@@ -9,8 +9,8 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	"github.com/example/logpipeline/internal/domain"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 // NoopQueue is used in Version 1 where no queue is needed.

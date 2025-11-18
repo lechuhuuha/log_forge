@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	loggerpkg "github.com/example/logpipeline/logger"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 func MaybeStartPprof(logger loggerpkg.Logger) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/logpipeline/internal/queue"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/queue"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 func GetEnv(key, fallback string) string {

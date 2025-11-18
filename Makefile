@@ -16,7 +16,7 @@ PROFILE_UI_PORT_GOROUTINE_COMPARE ?= :8089
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BINARY) ./cmd/server
+	go build -o $(BINARY) ./cmd
 
 run: build
 	./$(BINARY) -version=$(VERSION)
@@ -28,13 +28,13 @@ run-v2: build
 	./$(BINARY) -config=configs/config.v2.local.yaml
 
 capture-profile-v1: build
-	PROFILE_CAPTURE=1 PROFILE_NAME=v1 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -version=1
+	PROFILE_CAPTURE=1 PROFILE_NAME=v1 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=configs/config.v1.local.yaml
 
 capture-profile-v2: build
 	PROFILE_CAPTURE=1 PROFILE_NAME=v2 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=configs/config.v2.local.yaml
 
 profile-run-v1: build
-	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -version=1
+	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -version=1 -config=configs/config.v1.local.yaml
 
 profile-run-v2: build
 	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V2) ./$(BINARY) -config=configs/config.v2.local.yaml
@@ -128,7 +128,7 @@ loadtest: loadtest-v1
 loadtest-v1:
 	@if command -v hey >/dev/null 2>&1; then \
 		echo "running load test (version 1) with hey"; \
-		hey -n 100000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8080/logs; \
+		hey -n 100000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8082/logs; \
 	else \
 		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
 	fi

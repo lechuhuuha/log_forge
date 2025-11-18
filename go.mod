@@ -1,8 +1,8 @@
-module github.com/example/logpipeline
+module github.com/lechuhuuha/log_forge
 
 go 1.23.0
 
-toolchain go1.24.10
+toolchain go1.23.5
 
 require (
 	github.com/prometheus/client_golang v1.23.2

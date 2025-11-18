@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/example/logpipeline/internal/domain"
-	"github.com/example/logpipeline/internal/metrics"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/internal/metrics"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 // AggregationService periodically summarizes ingested logs.

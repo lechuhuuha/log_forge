@@ -7,7 +7,7 @@ import (
 	"runtime/pprof"
 	"time"
 
-	loggerpkg "github.com/example/logpipeline/logger"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 // WithProfiling runs the action while capturing CPU and heap profiles under dir.

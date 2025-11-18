@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/logpipeline/internal/domain"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 type mockStore struct {

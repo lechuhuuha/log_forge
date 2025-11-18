@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/example/logpipeline/internal/domain"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 // FileLogStore persists logs to disk using an hourly NDJSON layout.

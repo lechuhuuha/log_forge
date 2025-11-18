@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/logpipeline/internal/domain"
-	"github.com/example/logpipeline/internal/metrics"
-	"github.com/example/logpipeline/internal/service"
-	loggerpkg "github.com/example/logpipeline/logger"
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/internal/metrics"
+	"github.com/lechuhuuha/log_forge/internal/service"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 // Handler wires HTTP endpoints to services.

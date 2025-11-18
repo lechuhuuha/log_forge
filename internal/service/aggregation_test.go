@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	loggerpkg "github.com/example/logpipeline/logger"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 func TestAggregationServiceAggregateHour(t *testing.T) {
