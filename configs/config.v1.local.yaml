@@ -14,4 +14,4 @@ kafka:
   batchSize: 100
   batchTimeout: 1s
   consumers: 1
-  requireAllAcks: false
+  requireAllAcks: true

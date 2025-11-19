@@ -128,7 +128,7 @@ loadtest: loadtest-v1
 loadtest-v1:
 	@if command -v hey >/dev/null 2>&1; then \
 		echo "running load test (version 1) with hey"; \
-		hey -n 100000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8082/logs; \
+		hey -n 1000000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8082/logs; \
 	else \
 		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
 	fi
@@ -136,7 +136,7 @@ loadtest-v1:
 loadtest-v2:
 	@if command -v hey >/dev/null 2>&1; then \
 		echo "running load test (version 2) with hey"; \
-		hey -n 100000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8083/logs; \
+		hey -n 1000000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8083/logs; \
 	else \
 		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
 	fi
