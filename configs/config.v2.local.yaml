@@ -13,5 +13,6 @@ kafka:
   groupID: logs-consumer-group
   batchSize: 100
   batchTimeout: 1s
-  consumers: 1
+  # only need 3 go routine consumer for 10 patrittion in kafka
+  consumers: 3
   requireAllAcks: true

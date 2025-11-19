@@ -159,4 +159,6 @@ infra-down:
 
 kafka-topic:
 	@echo "Ensuring 'logs' topic exists"
-	@$(COMPOSE) exec kafka kafka-topics --create --if-not-exists --topic logs --partitions 3 --replication-factor 1 --bootstrap-server localhost:19092 >/dev/null 2>&1 || true
+	@$(COMPOSE) exec kafka kafka-topics --delete --topic logs --bootstrap-server kafka:9092 >/dev/null 2>&1 || true
+	@$(COMPOSE) exec kafka kafka-topics --create --if-not-exists --topic logs --partitions 10 --replication-factor 1 --bootstrap-server kafka:9092 >/dev/null 2>&1 || true
+	@$(COMPOSE) exec kafka kafka-topics --alter --topic logs --partitions 10 --bootstrap-server kafka:9092 >/dev/null 2>&1 || true

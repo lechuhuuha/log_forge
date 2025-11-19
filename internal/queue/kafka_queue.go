@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
@@ -15,11 +16,13 @@ import (
 
 // KafkaLogQueue implements LogQueue backed by Kafka.
 type KafkaLogQueue struct {
-	writer      *kafka.Writer
-	readerCfg   kafka.ReaderConfig
-	consumers   int
-	logger      loggerpkg.Logger
-	closeWriter sync.Once
+	writer    *kafka.Writer
+	readerCfg kafka.ReaderConfig
+	consumers int
+	logger    loggerpkg.Logger
+	// activeConsumers tracks how many goroutines are processing a message.
+	activeConsumers int32
+	closeWriter     sync.Once
 }
 
 // KafkaConfig holds configuration for Kafka queue.
@@ -119,13 +122,20 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 	}
 	for i := 0; i < q.consumers; i++ {
 		reader := kafka.NewReader(q.readerCfg)
-		go q.consume(ctx, reader, handler)
+		q.logger.Info("starting kafka consumer",
+			loggerpkg.F("index", i+1),
+			loggerpkg.F("total", q.consumers),
+			loggerpkg.F("topic", q.readerCfg.Topic),
+			loggerpkg.F("group", q.readerCfg.GroupID),
+		)
+		go q.consume(ctx, reader, handler, i+1)
 	}
 	return nil
 }
 
-func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, domain.LogRecord)) {
+func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, domain.LogRecord), idx int) {
 	defer reader.Close()
+	defer q.logger.Info("kafka consumer stopped", loggerpkg.F("index", idx))
 	for {
 		msg, err := reader.ReadMessage(ctx)
 		if err != nil {
@@ -137,12 +147,22 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
+		active := atomic.AddInt32(&q.activeConsumers, 1)
+		q.logger.Info("kafka consumer processing message",
+			loggerpkg.F("index", idx),
+			loggerpkg.F("activeConsumers", active),
+			loggerpkg.F("partition", msg.Partition),
+			loggerpkg.F("offset", msg.Offset),
+		)
+
 		var rec domain.LogRecord
 		if err := json.Unmarshal(msg.Value, &rec); err != nil {
 			q.logger.Warn("discard malformed kafka message", loggerpkg.F("error", err))
+			atomic.AddInt32(&q.activeConsumers, -1)
 			continue
 		}
 		handler(ctx, rec)
+		atomic.AddInt32(&q.activeConsumers, -1)
 	}
 }
 

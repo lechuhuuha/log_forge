@@ -1,0 +1,7 @@
+## Kafka consumer instrumentation notes
+
+- Added structured logs in `internal/queue/kafka_queue.go` to trace the lifecycle of each consumer goroutine (startup, per-message processing, shutdown) along with a shared `activeConsumers` counter.
+- `activeConsumers` tracks how many goroutines are simultaneously inside the handler, not how many exist overall. Quick handlers usually complete in microseconds, so this number rarely reaches the configured consumer count unless load is high or processing is slow.
+- Kafka only allows one consumer per partition at a time. The topic `logs` initially had one partition, so only one goroutine was ever active. After running `kafka-topics --alter --topic logs --partitions 10 --bootstrap-server kafka:9092`, multiple partitions are assigned and the logs now show indices spanning the consumer pool (e.g., partitions 0,1,5).
+- The producer hashes messages by `Path`, so partitions with the most popular paths will see more traffic. If only a few partitions receive data, the corresponding goroutines will be the only ones reported as active even though others are idle but ready.
+- To validate scaling: drive higher concurrency via `make loadtest-v2` (increase `hey -c`) or intentionally slow the handler (e.g., inject sleeps) to see `activeConsumers` climb toward the configured maximum. Heartbeat logs or goroutine dumps (`curl /debug/pprof/goroutine?debug=2`) can confirm all goroutines are alive even when `activeConsumers` is low.
