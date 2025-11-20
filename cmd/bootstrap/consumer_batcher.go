@@ -1,0 +1,153 @@
+package bootstrap
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/internal/metrics"
+	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+)
+
+const (
+	defaultConsumerFlushSize     = 512
+	defaultConsumerFlushInterval = 500 * time.Millisecond
+	consumerPersistTimeout       = 5 * time.Second
+)
+
+// consumerBatchWriter coalesces records from Kafka consumers before hitting disk.
+type consumerBatchWriter struct {
+	store         domain.LogStore
+	logger        loggerpkg.Logger
+	flushSize     int
+	flushInterval time.Duration
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	pending []domain.LogRecord
+	done    chan struct{}
+}
+
+func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, flushSize int, flushInterval time.Duration, logr loggerpkg.Logger) *consumerBatchWriter {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if flushSize <= 0 {
+		flushSize = defaultConsumerFlushSize
+	}
+	if flushInterval <= 0 {
+		flushInterval = defaultConsumerFlushInterval
+	}
+	if logr == nil {
+		logr = loggerpkg.NewNop()
+	}
+
+	batchCtx, cancel := context.WithCancel(ctx)
+	writer := &consumerBatchWriter{
+		store:         store,
+		logger:        logr,
+		flushSize:     flushSize,
+		flushInterval: flushInterval,
+		ctx:           batchCtx,
+		cancel:        cancel,
+		pending:       make([]domain.LogRecord, 0, flushSize),
+		done:          make(chan struct{}),
+	}
+	go writer.flushLoop()
+	return writer
+}
+
+func (w *consumerBatchWriter) Add(rec domain.LogRecord) {
+	if w == nil {
+		return
+	}
+	select {
+	case <-w.ctx.Done():
+		return
+	default:
+	}
+
+	w.mu.Lock()
+	w.pending = append(w.pending, rec)
+	if len(w.pending) >= w.flushSize {
+		batch := w.drainLocked()
+		w.mu.Unlock()
+		w.persist(batch, false)
+		return
+	}
+	w.mu.Unlock()
+}
+
+func (w *consumerBatchWriter) Close() {
+	if w == nil {
+		return
+	}
+	w.cancel()
+	<-w.done
+}
+
+func (w *consumerBatchWriter) flushLoop() {
+	ticker := time.NewTicker(w.flushInterval)
+	defer func() {
+		ticker.Stop()
+		// final flush even though context is canceled
+		w.flush(true)
+		close(w.done)
+	}()
+
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-ticker.C:
+			w.flush(false)
+		}
+	}
+}
+
+func (w *consumerBatchWriter) flush(force bool) {
+	batch := w.takePending()
+	if len(batch) == 0 {
+		return
+	}
+	w.persist(batch, force)
+}
+
+func (w *consumerBatchWriter) takePending() []domain.LogRecord {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.drainLocked()
+}
+
+func (w *consumerBatchWriter) drainLocked() []domain.LogRecord {
+	if len(w.pending) == 0 {
+		return nil
+	}
+	batch := make([]domain.LogRecord, len(w.pending))
+	copy(batch, w.pending)
+	w.pending = w.pending[:0]
+	return batch
+}
+
+func (w *consumerBatchWriter) persist(batch []domain.LogRecord, force bool) {
+	if len(batch) == 0 {
+		return
+	}
+	ctx := w.ctx
+	if force {
+		ctx = context.Background()
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, consumerPersistTimeout)
+	defer cancel()
+	if err := w.store.SaveBatch(writeCtx, batch); err != nil {
+		metrics.IncIngestErrors()
+		w.logger.Error("consumer batch write failed",
+			loggerpkg.F("error", err),
+			loggerpkg.F("batch_size", len(batch)))
+		return
+	}
+	metrics.AddLogsIngested(len(batch))
+}

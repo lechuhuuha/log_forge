@@ -99,6 +99,18 @@ profile-ui-cpu-v2:
 	echo "Serving $$file on http://localhost$(PROFILE_UI_PORT_V2)"; \
 	go tool pprof -http=$(PROFILE_UI_PORT_V2) $$file
 
+profile-ui-goroutine-v2:
+	@file=$$(find $(PROFILES_DIR) -maxdepth 1 -type f \( -name "v2_goroutine_*.pprof" -o -name "goroutine_v2.prof" -o -name "v2_goroutine_*.prof" \) 2>/dev/null | sort -r | head -n1); \
+	if [ -z "$$file" ]; then echo "No v2 profile profiles found. Run make profile-goroutine-v2 or capture-profile-v2 first."; exit 1; fi; \
+	echo "Serving $$file on http://localhost$(PROFILE_UI_PORT_V2)"; \
+	go tool pprof -http=$(PROFILE_UI_PORT_V2) $$file
+
+profile-ui-heap-v2:
+	@file=$$(find $(PROFILES_DIR) -maxdepth 1 -type f \( -name "v2_heap_*.pprof" -o -name "heap_v2.prof" -o -name "v2_heap_*.prof" \) 2>/dev/null | sort -r | head -n1); \
+	if [ -z "$$file" ]; then echo "No v2 profile profiles found. Run make profile-heap-v2 or capture-profile-v2 first."; exit 1; fi; \
+	echo "Serving $$file on http://localhost$(PROFILE_UI_PORT_V2)"; \
+	go tool pprof -http=$(PROFILE_UI_PORT_V2) $$file
+
 profile-ui-cpu-compare:
 	@file1=$$(find $(PROFILES_DIR) -maxdepth 1 -type f \( -name "v1_cpu_*.pprof" -o -name "cpu_v1.prof" -o -name "v1_cpu_*.prof" \) 2>/dev/null | sort -r | head -n1); \
 	file2=$$(find $(PROFILES_DIR) -maxdepth 1 -type f \( -name "v2_cpu_*.pprof" -o -name "cpu_v2.prof" -o -name "v2_cpu_*.prof" \) 2>/dev/null | sort -r | head -n1); \

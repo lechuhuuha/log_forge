@@ -12,7 +12,6 @@ import (
 	"github.com/lechuhuuha/log_forge/internal/config"
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	httpapi "github.com/lechuhuuha/log_forge/internal/http"
-	"github.com/lechuhuuha/log_forge/internal/metrics"
 	"github.com/lechuhuuha/log_forge/internal/profileutil"
 	"github.com/lechuhuuha/log_forge/internal/queue"
 	"github.com/lechuhuuha/log_forge/internal/service"
@@ -104,6 +103,8 @@ func (a *App) Run(ctx context.Context) error {
 			closer    func() error
 		)
 
+		var batchWriter *consumerBatchWriter
+
 		if a.cfg.Version == 2 {
 			mode = service.ModeQueue
 			var (
@@ -137,14 +138,14 @@ func (a *App) Run(ctx context.Context) error {
 			closer = kafkaQueue.Close
 
 			consumeCtx, consumeCancel := context.WithCancel(ctx)
-			defer consumeCancel()
+			batchWriter = newConsumerBatchWriter(consumeCtx, store, 0, 0, a.logger)
+			defer func() {
+				consumeCancel()
+				batchWriter.Close()
+			}()
+
 			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, rec domain.LogRecord) {
-				if err := store.SaveBatch(c, []domain.LogRecord{rec}); err != nil {
-					metrics.IncIngestErrors()
-					a.logger.Error("consumer failed to persist log", loggerpkg.F("error", err))
-					return
-				}
-				metrics.AddLogsIngested(1)
+				batchWriter.Add(rec)
 			}); err != nil {
 				return fmt.Errorf("start kafka consumers: %w", err)
 			}
@@ -157,6 +158,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 
 		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, a.logger)
+		defer ingestionSvc.Close()
 
 		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
 		aggSvc.Start(ctx)

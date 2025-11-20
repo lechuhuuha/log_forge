@@ -21,6 +21,10 @@ var (
 		Name: "aggregation_runs_total",
 		Help: "Total number of aggregation task executions.",
 	})
+	ingestionQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "ingestion_work_queue_depth",
+		Help: "Number of batches waiting to be produced to Kafka.",
+	})
 
 	collectorsOnce sync.Once
 )
@@ -59,4 +63,12 @@ func IncIngestErrors() {
 // IncAggregationRuns increments the aggregation run counter.
 func IncAggregationRuns() {
 	aggregationRuns.Inc()
+}
+
+// SetIngestionQueueDepth records the current producer work queue size.
+func SetIngestionQueueDepth(n int) {
+	if n < 0 {
+		n = 0
+	}
+	ingestionQueueDepth.Set(float64(n))
 }

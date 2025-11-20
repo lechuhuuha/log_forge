@@ -5,13 +5,13 @@ storage:
   logsDir: "./logs"
   analyticsDir: "./analytics"
 aggregation:
-  interval: 30s
+  interval: 3s
 kafka:
   brokers:
     - localhost:19092
   topic: logs
   groupID: logs-consumer-group
-  batchSize: 500
+  batchSize: 50000
   batchTimeout: 200ms
   # use enough consumers to cover partitions and keep up with bursts
   consumers: 10

@@ -66,21 +66,14 @@ func NewKafkaLogQueue(cfg KafkaConfig, logr loggerpkg.Logger) (*KafkaLogQueue, e
 		requiredAcks = kafka.RequireAll
 	}
 
-	// give the writer enough internal buffer to reduce push-back during bursts
-	queueCapacity := cfg.BatchSize * 4
-	if queueCapacity < 1000 {
-		queueCapacity = 1000
-	}
-
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:       cfg.Brokers,
-		Topic:         cfg.Topic,
-		Balancer:      &kafka.Hash{},
-		BatchSize:     cfg.BatchSize,
-		Async:         false,
-		BatchTimeout:  cfg.BatchTimeout,
-		RequiredAcks:  int(requiredAcks),
-		QueueCapacity: queueCapacity,
+		Brokers: cfg.Brokers,
+		Topic:   cfg.Topic,
+		// Balancer:     &kafka.Hash{},
+		BatchSize:    cfg.BatchSize,
+		Async:        false,
+		BatchTimeout: cfg.BatchTimeout,
+		RequiredAcks: int(requiredAcks),
 		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
 			logr.Error(fmt.Sprintf(msg, args...))
 		}),
@@ -113,9 +106,9 @@ func (q *KafkaLogQueue) EnqueueBatch(ctx context.Context, records []domain.LogRe
 		if err != nil {
 			return err
 		}
-		key := []byte(fmt.Sprintf("%s|%d|%s", rec.Path, rec.Timestamp.UnixNano(), rec.UserAgent))
+		// key := []byte(fmt.Sprintf("%s|%d|%s", rec.Path, rec.Timestamp.UnixNano(), rec.UserAgent))
 		messages[i] = kafka.Message{
-			Key:   key,
+			// Key:   key,
 			Value: data,
 			Time:  rec.Timestamp,
 		}
@@ -159,7 +152,7 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 			continue
 		}
 		active := atomic.AddInt32(&q.activeConsumers, 1)
-		q.logger.Info("kafka consumer processing message",
+		q.logger.Debug("kafka consumer processing message",
 			loggerpkg.F("index", idx),
 			loggerpkg.F("activeConsumers", active),
 			loggerpkg.F("partition", msg.Partition),
