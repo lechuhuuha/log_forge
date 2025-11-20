@@ -13,5 +13,5 @@ kafka:
   groupID: logs-consumer-group
   batchSize: 100
   batchTimeout: 1s
-  consumers: 1
+  consumers: 3
   requireAllAcks: true

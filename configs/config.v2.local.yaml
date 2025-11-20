@@ -11,8 +11,8 @@ kafka:
     - localhost:19092
   topic: logs
   groupID: logs-consumer-group
-  batchSize: 100
-  batchTimeout: 1s
-  # only need 3 go routine consumer for 10 patrittion in kafka
-  consumers: 3
+  batchSize: 500
+  batchTimeout: 200ms
+  # use enough consumers to cover partitions and keep up with bursts
+  consumers: 10
   requireAllAcks: true

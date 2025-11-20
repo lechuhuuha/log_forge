@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,15 +66,25 @@ func NewKafkaLogQueue(cfg KafkaConfig, logr loggerpkg.Logger) (*KafkaLogQueue, e
 		requiredAcks = kafka.RequireAll
 	}
 
-	writer := &kafka.Writer{
-		Addr:         kafka.TCP(cfg.Brokers...),
-		Topic:        cfg.Topic,
-		Async:        true,
-		BatchSize:    cfg.BatchSize,
-		BatchTimeout: cfg.BatchTimeout,
-		RequiredAcks: requiredAcks,
-		Balancer:     &kafka.Hash{},
+	// give the writer enough internal buffer to reduce push-back during bursts
+	queueCapacity := cfg.BatchSize * 4
+	if queueCapacity < 1000 {
+		queueCapacity = 1000
 	}
+
+	writer := kafka.NewWriter(kafka.WriterConfig{
+		Brokers:       cfg.Brokers,
+		Topic:         cfg.Topic,
+		Balancer:      &kafka.Hash{},
+		BatchSize:     cfg.BatchSize,
+		Async:         false,
+		BatchTimeout:  cfg.BatchTimeout,
+		RequiredAcks:  int(requiredAcks),
+		QueueCapacity: queueCapacity,
+		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
+			logr.Error(fmt.Sprintf(msg, args...))
+		}),
+	})
 
 	readerCfg := kafka.ReaderConfig{
 		Brokers:  cfg.Brokers,
@@ -102,7 +113,7 @@ func (q *KafkaLogQueue) EnqueueBatch(ctx context.Context, records []domain.LogRe
 		if err != nil {
 			return err
 		}
-		key := []byte(rec.Path)
+		key := []byte(fmt.Sprintf("%s|%d|%s", rec.Path, rec.Timestamp.UnixNano(), rec.UserAgent))
 		messages[i] = kafka.Message{
 			Key:   key,
 			Value: data,

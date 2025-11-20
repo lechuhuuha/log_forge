@@ -25,6 +25,8 @@ type IngestionService struct {
 	queue  domain.LogQueue
 	mode   PipelineMode
 	logger loggerpkg.Logger
+
+	workCh chan []domain.LogRecord
 }
 
 // NewIngestionService creates a new ingestion service.
@@ -32,11 +34,39 @@ func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode Pipe
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
+
+	if mode == ModeQueue {
+		// large enough to absorb bursts but still bounded to avoid unbounded memory growth
+		const workQueueSize = 65536
+		const producerWorkers = 16
+
+		workCh := make(chan []domain.LogRecord, workQueueSize)
+		svc := &IngestionService{
+			store:  store,
+			queue:  queue,
+			mode:   mode,
+			logger: logr,
+			workCh: workCh,
+		}
+		for i := 0; i < producerWorkers; i++ {
+			go svc.runProducer()
+		}
+		return svc
+	}
 	return &IngestionService{
 		store:  store,
 		queue:  queue,
 		mode:   mode,
 		logger: logr,
+	}
+}
+
+func (s *IngestionService) runProducer() {
+	for batch := range s.workCh {
+		if err := s.queue.EnqueueBatch(context.Background(), batch); err != nil {
+			metrics.IncIngestErrors()
+			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
+		}
 	}
 }
 
@@ -53,15 +83,12 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 
 	switch s.mode {
 	case ModeQueue:
-		if s.queue == nil {
-			return errors.New("log queue not configured")
+		select {
+		case s.workCh <- records:
+			return nil // returns quickly when buffer available; otherwise blocks until space or ctx cancellation
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		if err := s.queue.EnqueueBatch(ctx, records); err != nil {
-			metrics.IncIngestErrors()
-			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
-			return err
-		}
-		return nil
 	case ModeDirect:
 		fallthrough
 	default:
