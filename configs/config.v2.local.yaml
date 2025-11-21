@@ -6,13 +6,25 @@ storage:
   analyticsDir: "./analytics"
 aggregation:
   interval: 3s
+ingestion:
+  queueBufferSize: 10000
+  producerWorkers: 10
+  producerWriteTimeout: 10s
+  queueHighWaterPercent: 0.9
+consumer:
+  flushSize: 512
+  flushInterval: 500ms
+  persistTimeout: 5s
 kafka:
   brokers:
     - localhost:19092
   topic: logs
   groupID: logs-consumer-group
-  batchSize: 50000
+  batchSize: 10000
   batchTimeout: 200ms
+  batchBytes: 0
+  compression: none
+  async: true
   # use enough consumers to cover partitions and keep up with bursts
   consumers: 10
   requireAllAcks: true

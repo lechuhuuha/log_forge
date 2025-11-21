@@ -174,3 +174,6 @@ kafka-topic:
 	@$(COMPOSE) exec kafka kafka-topics --delete --topic logs --bootstrap-server kafka:9092 >/dev/null 2>&1 || true
 	@$(COMPOSE) exec kafka kafka-topics --create --if-not-exists --topic logs --partitions 10 --replication-factor 1 --bootstrap-server kafka:9092 >/dev/null 2>&1 || true
 	@$(COMPOSE) exec kafka kafka-topics --alter --topic logs --partitions 10 --bootstrap-server kafka:9092 >/dev/null 2>&1 || true
+
+total-message-kafka-topic:
+	@$(COMPOSE) exec kafka kafka-run-class kafka.tools.GetOffsetShell --broker-list kafka:9092 --topic logs --time -1

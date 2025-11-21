@@ -23,16 +23,24 @@ const (
 )
 
 const (
-	queueBufferSize       = 10000
-	producerWorkers       = 100
-	producerWriteTimeout  = 10 * time.Second
-	queueHighWaterPercent = 0.9
+	defaultQueueBufferSize       = 10000
+	defaultProducerWorkers       = 10
+	defaultProducerWriteTimeout  = 10 * time.Second
+	defaultQueueHighWaterPercent = 0.9
 )
 
 var (
 	// ErrIngestionStopped indicates the ingestion service is no longer accepting work.
 	ErrIngestionStopped = errors.New("ingestion service stopped")
 )
+
+// IngestionConfig allows tuning of producer-side buffering and workers.
+type IngestionConfig struct {
+	QueueBufferSize       int
+	ProducerWorkers       int
+	ProducerWriteTimeout  time.Duration
+	QueueHighWaterPercent float64
+}
 
 // IngestionService orchestrates log ingestion across versions.
 type IngestionService struct {
@@ -48,27 +56,55 @@ type IngestionService struct {
 
 	producerCtx    context.Context
 	producerCancel context.CancelFunc
+
+	queueBufferSize       int
+	producerWorkers       int
+	producerWriteTimeout  time.Duration
+	queueHighWaterPercent float64
 }
 
 // NewIngestionService creates a new ingestion service.
-func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode PipelineMode, logr loggerpkg.Logger) *IngestionService {
+func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode PipelineMode, logr loggerpkg.Logger, cfg *IngestionConfig) *IngestionService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
 
+	bufferSize := defaultQueueBufferSize
+	workers := defaultProducerWorkers
+	writeTimeout := defaultProducerWriteTimeout
+	highWater := defaultQueueHighWaterPercent
+	if cfg != nil {
+		if cfg.QueueBufferSize > 0 {
+			bufferSize = cfg.QueueBufferSize
+		}
+		if cfg.ProducerWorkers > 0 {
+			workers = cfg.ProducerWorkers
+		}
+		if cfg.ProducerWriteTimeout > 0 {
+			writeTimeout = cfg.ProducerWriteTimeout
+		}
+		if cfg.QueueHighWaterPercent > 0 {
+			highWater = cfg.QueueHighWaterPercent
+		}
+	}
+
 	if mode == ModeQueue {
 		producerCtx, cancel := context.WithCancel(context.Background())
-		workCh := make(chan []domain.LogRecord, queueBufferSize)
+		workCh := make(chan []domain.LogRecord, bufferSize)
 		svc := &IngestionService{
-			store:          store,
-			queue:          queue,
-			mode:           mode,
-			logger:         logr,
-			workCh:         workCh,
-			producerCtx:    producerCtx,
-			producerCancel: cancel,
+			store:                 store,
+			queue:                 queue,
+			mode:                  mode,
+			logger:                logr,
+			workCh:                workCh,
+			producerCtx:           producerCtx,
+			producerCancel:        cancel,
+			queueBufferSize:       bufferSize,
+			producerWorkers:       workers,
+			producerWriteTimeout:  writeTimeout,
+			queueHighWaterPercent: highWater,
 		}
-		for i := 0; i < producerWorkers; i++ {
+		for i := 0; i < workers; i++ {
 			svc.wg.Add(1)
 			go svc.runProducer(i)
 		}
@@ -90,7 +126,7 @@ func (s *IngestionService) runProducer(workerID int) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		produceCtx, cancel := context.WithTimeout(ctx, producerWriteTimeout)
+		produceCtx, cancel := context.WithTimeout(ctx, s.producerWriteTimeout)
 		if err := s.queue.EnqueueBatch(produceCtx, batch); err != nil {
 			metrics.IncIngestErrors()
 			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err), loggerpkg.F("worker_id", workerID))
@@ -122,7 +158,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 		case s.workCh <- records:
 			currentDepth := len(s.workCh)
 			metrics.SetIngestionQueueDepth(currentDepth)
-			if currentDepth >= int(float64(cap(s.workCh))*queueHighWaterPercent) {
+			if currentDepth >= int(float64(cap(s.workCh))*s.queueHighWaterPercent) {
 				s.logger.Warn("ingestion work queue nearing capacity",
 					loggerpkg.F("depth", currentDepth),
 					loggerpkg.F("capacity", cap(s.workCh)))

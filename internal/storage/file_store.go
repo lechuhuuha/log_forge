@@ -53,6 +53,9 @@ func (s *FileLogStore) SaveBatch(ctx context.Context, records []domain.LogRecord
 	}
 
 	for path, group := range grouped {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create log directory: %w", err)
+		}
 		if err := s.appendRecords(path, group); err != nil {
 			return err
 		}
@@ -64,10 +67,6 @@ func (s *FileLogStore) appendRecords(path string, records []domain.LogRecord) er
 	lock := s.lockFor(path)
 	lock.Lock()
 	defer lock.Unlock()
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create log directory: %w", err)
-	}
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

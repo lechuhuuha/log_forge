@@ -11,17 +11,25 @@ import (
 )
 
 const (
-	defaultConsumerFlushSize     = 512
-	defaultConsumerFlushInterval = 500 * time.Millisecond
-	consumerPersistTimeout       = 5 * time.Second
+	defaultConsumerFlushSize      = 512
+	defaultConsumerFlushInterval  = 500 * time.Millisecond
+	defaultConsumerPersistTimeout = 5 * time.Second
 )
+
+// ConsumerBatchConfig allows tuning consumer-side batching.
+type ConsumerBatchConfig struct {
+	FlushSize      int
+	FlushInterval  time.Duration
+	PersistTimeout time.Duration
+}
 
 // consumerBatchWriter coalesces records from Kafka consumers before hitting disk.
 type consumerBatchWriter struct {
-	store         domain.LogStore
-	logger        loggerpkg.Logger
-	flushSize     int
-	flushInterval time.Duration
+	store          domain.LogStore
+	logger         loggerpkg.Logger
+	flushSize      int
+	flushInterval  time.Duration
+	persistTimeout time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -31,15 +39,18 @@ type consumerBatchWriter struct {
 	done    chan struct{}
 }
 
-func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, flushSize int, flushInterval time.Duration, logr loggerpkg.Logger) *consumerBatchWriter {
+func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, cfg ConsumerBatchConfig, logr loggerpkg.Logger) *consumerBatchWriter {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if flushSize <= 0 {
-		flushSize = defaultConsumerFlushSize
+	if cfg.FlushSize <= 0 {
+		cfg.FlushSize = defaultConsumerFlushSize
 	}
-	if flushInterval <= 0 {
-		flushInterval = defaultConsumerFlushInterval
+	if cfg.FlushInterval <= 0 {
+		cfg.FlushInterval = defaultConsumerFlushInterval
+	}
+	if cfg.PersistTimeout <= 0 {
+		cfg.PersistTimeout = defaultConsumerPersistTimeout
 	}
 	if logr == nil {
 		logr = loggerpkg.NewNop()
@@ -47,14 +58,15 @@ func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, flushSiz
 
 	batchCtx, cancel := context.WithCancel(ctx)
 	writer := &consumerBatchWriter{
-		store:         store,
-		logger:        logr,
-		flushSize:     flushSize,
-		flushInterval: flushInterval,
-		ctx:           batchCtx,
-		cancel:        cancel,
-		pending:       make([]domain.LogRecord, 0, flushSize),
-		done:          make(chan struct{}),
+		store:          store,
+		logger:         logr,
+		flushSize:      cfg.FlushSize,
+		flushInterval:  cfg.FlushInterval,
+		persistTimeout: cfg.PersistTimeout,
+		ctx:            batchCtx,
+		cancel:         cancel,
+		pending:        make([]domain.LogRecord, 0, cfg.FlushSize),
+		done:           make(chan struct{}),
 	}
 	go writer.flushLoop()
 	return writer
@@ -140,7 +152,7 @@ func (w *consumerBatchWriter) persist(batch []domain.LogRecord, force bool) {
 	if force {
 		ctx = context.Background()
 	}
-	writeCtx, cancel := context.WithTimeout(ctx, consumerPersistTimeout)
+	writeCtx, cancel := context.WithTimeout(ctx, w.persistTimeout)
 	defer cancel()
 	if err := w.store.SaveBatch(writeCtx, batch); err != nil {
 		metrics.IncIngestErrors()

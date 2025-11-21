@@ -54,7 +54,7 @@ func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Con
 
 func TestIngestionService_DirectModeUsesStore(t *testing.T) {
 	store := &mockStore{}
-	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop())
+	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop(), nil)
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/home",
@@ -72,7 +72,7 @@ func TestIngestionService_DirectModeUsesStore(t *testing.T) {
 func TestIngestionService_QueueModeUsesQueue(t *testing.T) {
 	notify := make(chan struct{}, 1)
 	q := &mockQueue{notify: notify}
-	svc := NewIngestionService(nil, q, ModeQueue, loggerpkg.NewNop())
+	svc := NewIngestionService(nil, q, ModeQueue, loggerpkg.NewNop(), nil)
 	t.Cleanup(svc.Close)
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
@@ -98,7 +98,7 @@ func TestIngestionService_QueueModeUsesQueue(t *testing.T) {
 
 func TestIngestionService_PropagatesErrors(t *testing.T) {
 	store := &mockStore{err: context.DeadlineExceeded}
-	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop())
+	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop(), nil)
 	records := []domain.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/error",

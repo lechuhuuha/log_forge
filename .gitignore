@@ -6,3 +6,4 @@ data/
 profiles/
 *.log
 *.tmp
+.cache/

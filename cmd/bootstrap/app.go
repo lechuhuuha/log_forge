@@ -28,6 +28,8 @@ type AppConfig struct {
 	AnalyticsDir        string
 	AggregationInterval time.Duration
 	KafkaSettings       *config.KafkaSettings
+	Ingestion           config.IngestionSettings
+	Consumer            config.ConsumerSettings
 }
 
 // App wires together the HTTP server, services, and background workers.
@@ -61,6 +63,8 @@ func BuildApp(cliCfg CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		}
 		appCfg.AggregationInterval = aggInterval
 		appCfg.KafkaSettings = &fileCfg.Kafka
+		appCfg.Ingestion = fileCfg.Ingestion
+		appCfg.Consumer = fileCfg.Consumer
 	}
 
 	return NewApp(appCfg, logger)
@@ -96,6 +100,31 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	run := func() error {
+		producerWriteTimeout, err := a.cfg.Ingestion.ProducerTimeout(10 * time.Second)
+		if err != nil {
+			return fmt.Errorf("invalid producer write timeout: %w", err)
+		}
+		consumerFlushInterval, err := a.cfg.Consumer.ConsumerFlushInterval(500 * time.Millisecond)
+		if err != nil {
+			return fmt.Errorf("invalid consumer flush interval: %w", err)
+		}
+		consumerPersistTimeout, err := a.cfg.Consumer.ConsumerPersistTimeout(5 * time.Second)
+		if err != nil {
+			return fmt.Errorf("invalid consumer persist timeout: %w", err)
+		}
+
+		ingestionCfg := &service.IngestionConfig{
+			QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
+			ProducerWorkers:       a.cfg.Ingestion.ProducerWorkers,
+			ProducerWriteTimeout:  producerWriteTimeout,
+			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
+		}
+		consumerBatchCfg := ConsumerBatchConfig{
+			FlushSize:      a.cfg.Consumer.FlushSize,
+			FlushInterval:  consumerFlushInterval,
+			PersistTimeout: consumerPersistTimeout,
+		}
+
 		store := storage.NewFileLogStore(a.cfg.LogsDir, a.logger)
 		var (
 			queueImpl domain.LogQueue
@@ -124,6 +153,9 @@ func (a *App) Run(ctx context.Context) error {
 					BatchTimeout:   batchTimeout,
 					Consumers:      a.cfg.KafkaSettings.Consumers,
 					RequireAllAcks: a.cfg.KafkaSettings.RequireAllAcks,
+					BatchBytes:     a.cfg.KafkaSettings.BatchBytes,
+					Compression:    a.cfg.KafkaSettings.Compression,
+					Async:          a.cfg.KafkaSettings.Async,
 				}, a.logger)
 				if err != nil {
 					return fmt.Errorf("configure kafka: %w", err)
@@ -138,7 +170,7 @@ func (a *App) Run(ctx context.Context) error {
 			closer = kafkaQueue.Close
 
 			consumeCtx, consumeCancel := context.WithCancel(ctx)
-			batchWriter = newConsumerBatchWriter(consumeCtx, store, 0, 0, a.logger)
+			batchWriter = newConsumerBatchWriter(consumeCtx, store, consumerBatchCfg, a.logger)
 			defer func() {
 				consumeCancel()
 				batchWriter.Close()
@@ -157,7 +189,7 @@ func (a *App) Run(ctx context.Context) error {
 			defer closer()
 		}
 
-		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, a.logger)
+		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, a.logger, ingestionCfg)
 		defer ingestionSvc.Close()
 
 		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)

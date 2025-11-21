@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+	kafkagzip "github.com/segmentio/kafka-go/gzip"
+	kafkalz4 "github.com/segmentio/kafka-go/lz4"
+	kafkasnappy "github.com/segmentio/kafka-go/snappy"
+	kafkazstd "github.com/segmentio/kafka-go/zstd"
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
@@ -35,6 +40,9 @@ type KafkaConfig struct {
 	BatchTimeout   time.Duration
 	Consumers      int
 	RequireAllAcks bool
+	BatchBytes     int
+	Compression    string
+	Async          bool
 }
 
 // NewKafkaLogQueue builds a Kafka-backed queue implementation.
@@ -71,12 +79,14 @@ func NewKafkaLogQueue(cfg KafkaConfig, logr loggerpkg.Logger) (*KafkaLogQueue, e
 		Topic:   cfg.Topic,
 		// Balancer:     &kafka.Hash{},
 		BatchSize:    cfg.BatchSize,
-		Async:        false,
+		BatchBytes:   cfg.BatchBytes,
+		Async:        cfg.Async,
 		BatchTimeout: cfg.BatchTimeout,
 		RequiredAcks: int(requiredAcks),
 		ErrorLogger: kafka.LoggerFunc(func(msg string, args ...interface{}) {
 			logr.Error(fmt.Sprintf(msg, args...))
 		}),
+		CompressionCodec: compressionCodec(cfg.Compression),
 	})
 
 	readerCfg := kafka.ReaderConfig{
@@ -93,6 +103,23 @@ func NewKafkaLogQueue(cfg KafkaConfig, logr loggerpkg.Logger) (*KafkaLogQueue, e
 		consumers: cfg.Consumers,
 		logger:    logr,
 	}, nil
+}
+
+func compressionCodec(name string) kafka.CompressionCodec {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "none":
+		return nil
+	case "gzip":
+		return kafkagzip.NewCompressionCodec()
+	case "snappy":
+		return kafkasnappy.NewCompressionCodec()
+	case "lz4":
+		return kafkalz4.NewCompressionCodec()
+	case "zstd", "zstandard":
+		return kafkazstd.NewCompressionCodec()
+	default:
+		return nil
+	}
 }
 
 // EnqueueBatch encodes and produces the records to Kafka.
@@ -138,8 +165,13 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 }
 
 func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, domain.LogRecord), idx int) {
-	defer reader.Close()
-	defer q.logger.Info("kafka consumer stopped", loggerpkg.F("index", idx))
+	defer func() {
+		reader.Close()
+		q.logger.Info("kafka consumer stopped", loggerpkg.F("index", idx))
+
+	}()
+	var rec domain.LogRecord
+
 	for {
 		msg, err := reader.ReadMessage(ctx)
 		if err != nil {
@@ -159,7 +191,7 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 			loggerpkg.F("offset", msg.Offset),
 		)
 
-		var rec domain.LogRecord
+		rec = domain.LogRecord{} // reuse the same struct each iteration
 		if err := json.Unmarshal(msg.Value, &rec); err != nil {
 			q.logger.Warn("discard malformed kafka message", loggerpkg.F("error", err))
 			atomic.AddInt32(&q.activeConsumers, -1)
