@@ -12,7 +12,7 @@ PROFILE_UI_PORT_COMPARE ?= :8087
 PROFILE_UI_PORT_HEAP_COMPARE ?= :8088
 PROFILE_UI_PORT_GOROUTINE_COMPARE ?= :8089
 
-.PHONY: build run run-v1 run-v2 capture-profile-v1 capture-profile-v2 profile-run-v1 profile-run-v2 profile-cpu-v1 profile-cpu-v2 profile-heap-v1 profile-heap-v2 profile-goroutine-v1 profile-goroutine-v2 profile-ui-cpu-v1 profile-ui-cpu-v2 profile-ui-cpu-compare profile-ui-heap-compare profile-ui-goroutine-compare test loadtest loadtest-v1 loadtest-v2 stack-up stack-down infra-up infra-down kafka-topic
+.PHONY: build run run-v1 run-v2 capture-profile-v1 capture-profile-v2 profile-run-v1 profile-run-v2 profile-cpu-v1 profile-cpu-v2 profile-heap-v1 profile-heap-v2 profile-goroutine-v1 profile-goroutine-v2 profile-ui-cpu-v1 profile-ui-cpu-v2 profile-ui-cpu-compare profile-ui-heap-compare profile-ui-goroutine-compare test bench race loadtest loadtest-v1 loadtest-v2 stack-up stack-down infra-up infra-down kafka-topic
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -134,6 +134,12 @@ profile-ui-goroutine-compare:
 
 test:
 	go test ./... -count=1 -cover -json | tparse -all
+
+bench:
+	go test -run=^$$ -bench=. -benchmem ./internal/service ./cmd/bootstrap
+
+race:
+	go test -race ./internal/service ./internal/http ./cmd/bootstrap ./internal/queue
 
 loadtest: loadtest-v1
 
