@@ -7,3 +7,4 @@ profiles/
 *.log
 *.tmp
 .cache/
+.gocache/

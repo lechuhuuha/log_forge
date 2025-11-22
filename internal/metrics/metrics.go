@@ -13,9 +13,17 @@ var (
 		Name: "logs_ingested_total",
 		Help: "Total number of log entries successfully persisted to storage.",
 	})
+	batchesReceived = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "log_batches_received_total",
+		Help: "Total number of log batches accepted by the API.",
+	})
 	ingestErrors = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "ingest_errors_total",
 		Help: "Total number of errors encountered while ingesting logs.",
+	})
+	invalidRequests = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "invalid_requests_total",
+		Help: "Total number of invalid /logs requests rejected during parsing or validation.",
 	})
 	aggregationRuns = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "aggregation_runs_total",
@@ -55,9 +63,19 @@ func AddLogsIngested(n int) {
 	logsIngested.Add(float64(n))
 }
 
+// IncBatchesReceived increments the batch counter.
+func IncBatchesReceived() {
+	batchesReceived.Inc()
+}
+
 // IncIngestErrors increments the ingestion error counter.
 func IncIngestErrors() {
 	ingestErrors.Inc()
+}
+
+// IncInvalidRequests increments the invalid request counter.
+func IncInvalidRequests() {
+	invalidRequests.Inc()
 }
 
 // IncAggregationRuns increments the aggregation run counter.

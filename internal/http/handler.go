@@ -44,7 +44,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	records, err := h.decodeRecords(r)
 	if err != nil {
-		metrics.IncIngestErrors()
+		metrics.IncInvalidRequests()
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

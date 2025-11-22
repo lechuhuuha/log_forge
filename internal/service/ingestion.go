@@ -163,6 +163,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 					loggerpkg.F("depth", currentDepth),
 					loggerpkg.F("capacity", cap(s.workCh)))
 			}
+			metrics.IncBatchesReceived()
 			return nil // returns quickly when buffer available; otherwise blocks until space or ctx cancellation
 		case <-ctx.Done():
 			return ctx.Err()
@@ -178,6 +179,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 			s.logger.Error("failed to save logs", loggerpkg.F("error", err))
 			return err
 		}
+		metrics.IncBatchesReceived()
 		metrics.AddLogsIngested(len(records))
 		return nil
 	}

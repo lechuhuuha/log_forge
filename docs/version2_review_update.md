@@ -11,12 +11,10 @@ This follow-up covers the improvements implemented after the initial review and 
 
 ## Remaining Concerns
 1. **Producer retries / DLQ:** Failed Kafka writes still drop batches after logging (`internal/service/ingestion.go:95`). With the shorter buffer, failures surface faster, but adding retries or a replay mechanism is still important.
-2. **Configurable buffer/flush knobs:** `queueBufferSize`, producer worker count, and consumer flush size are constants. Exposing them via config would let operators tune the pipeline for different workloads.
-3. **Queue depth alerting:** The new metric needs dashboards/alerts to be effective. Documenting the warning threshold (90% of capacity) in runbooks would help responders act promptly.
-4. **Batcher flush behavior on shutdown:** The batcher forces a final flush (`cmd/bootstrap/consumer_batcher.go:92`), but it currently uses `context.Background()` when `force` is true. If `SaveBatch` blocks on disk, shutdown can still stall; consider switching to a short timeout even during forced flushes.
+2. **Queue depth alerting:** The new metric needs dashboards/alerts to be effective. Documenting the warning threshold (90% of capacity) in runbooks would help responders act promptly.
+3. **Batcher flush behavior on shutdown:** The batcher forces a final flush (`cmd/bootstrap/consumer_batcher.go:92`), but it currently uses `context.Background()` when `force` is true. If `SaveBatch` blocks on disk, shutdown can still stall; consider switching to a short timeout even during forced flushes.
 
 ## Suggested Next Steps
 1. Implement retry/backoff for Kafka producer failures and consider a persistent DLQ for batches that never succeed.
-2. Surface queue buffer size, producer worker count, and consumer flush parameters in configuration (`configs/config.v2.local.yaml`) so they can be tuned per environment.
-3. Add unit/integration tests for the batcher to ensure batches flush at the expected thresholds and during shutdown.
-4. Extend `/metrics` with gauges for producer/consumer error counts and batcher flush sizes to give a holistic view of ingestion health.
+2. Add unit/integration tests for the batcher to ensure batches flush at the expected thresholds and during shutdown.
+3. Extend `/metrics` with gauges for producer/consumer error counts and batcher flush sizes to give a holistic view of ingestion health.
