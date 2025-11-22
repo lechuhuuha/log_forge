@@ -52,61 +52,81 @@ func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Con
 	return nil
 }
 
-func TestIngestionService_DirectModeUsesStore(t *testing.T) {
-	store := &mockStore{}
-	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop(), nil)
+func TestIngestionService_ProcessBatch(t *testing.T) {
+	now := time.Now()
 	records := []domain.LogRecord{{
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Path:      "/home",
 		UserAgent: "ua",
 	}}
 
-	if err := svc.ProcessBatch(context.Background(), records); err != nil {
-		t.Fatalf("ProcessBatch returned error: %v", err)
+	cases := []struct {
+		name          string
+		mode          PipelineMode
+		store         *mockStore
+		queue         *mockQueue
+		cfg           *IngestionConfig
+		expectErr     bool
+		expectBatches int
+	}{
+		{
+			name:          "direct mode uses store",
+			mode:          ModeDirect,
+			store:         &mockStore{},
+			expectBatches: 1,
+		},
+		{
+			name:          "queue mode uses queue",
+			mode:          ModeQueue,
+			queue:         &mockQueue{notify: make(chan struct{}, 1)},
+			cfg:           &IngestionConfig{QueueBufferSize: 4, ProducerWorkers: 1},
+			expectBatches: 1,
+		},
+		{
+			name:      "direct mode propagates errors",
+			mode:      ModeDirect,
+			store:     &mockStore{err: context.DeadlineExceeded},
+			expectErr: true,
+		},
 	}
-	if len(store.batches) != 1 {
-		t.Fatalf("expected store to receive 1 batch, got %d", len(store.batches))
-	}
-}
 
-func TestIngestionService_QueueModeUsesQueue(t *testing.T) {
-	notify := make(chan struct{}, 1)
-	q := &mockQueue{notify: notify}
-	svc := NewIngestionService(nil, q, ModeQueue, loggerpkg.NewNop(), nil)
-	t.Cleanup(svc.Close)
-	records := []domain.LogRecord{{
-		Timestamp: time.Now(),
-		Path:      "/api",
-		UserAgent: "ua",
-	}}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewIngestionService(tc.store, tc.queue, tc.mode, loggerpkg.NewNop(), tc.cfg)
+			if tc.mode == ModeQueue {
+				t.Cleanup(svc.Close)
+			}
 
-	if err := svc.ProcessBatch(context.Background(), records); err != nil {
-		t.Fatalf("ProcessBatch returned error: %v", err)
-	}
-	select {
-	case <-notify:
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for producer to flush queue")
-	}
+			err := svc.ProcessBatch(context.Background(), records)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error but got nil")
+				}
+			} else if err != nil {
+				t.Fatalf("ProcessBatch returned error: %v", err)
+			}
 
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.batches) != 1 {
-		t.Fatalf("expected queue to receive 1 batch, got %d", len(q.batches))
-	}
-}
-
-func TestIngestionService_PropagatesErrors(t *testing.T) {
-	store := &mockStore{err: context.DeadlineExceeded}
-	svc := NewIngestionService(store, nil, ModeDirect, loggerpkg.NewNop(), nil)
-	records := []domain.LogRecord{{
-		Timestamp: time.Now(),
-		Path:      "/error",
-		UserAgent: "ua",
-	}}
-
-	err := svc.ProcessBatch(context.Background(), records)
-	if err == nil {
-		t.Fatalf("expected error but got nil")
+			switch tc.mode {
+			case ModeDirect:
+				if tc.store != nil && len(tc.store.batches) != tc.expectBatches {
+					t.Fatalf("expected %d batches in store, got %d", tc.expectBatches, len(tc.store.batches))
+				}
+			case ModeQueue:
+				if tc.queue != nil {
+					select {
+					case <-tc.queue.notify:
+					case <-time.After(time.Second):
+						t.Fatalf("timed out waiting for producer to flush queue")
+					}
+					tc.queue.mu.Lock()
+					got := len(tc.queue.batches)
+					tc.queue.mu.Unlock()
+					if got != tc.expectBatches {
+						t.Fatalf("expected %d batches in queue, got %d", tc.expectBatches, got)
+					}
+				}
+			}
+		})
 	}
 }
