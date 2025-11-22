@@ -133,7 +133,7 @@ profile-ui-goroutine-compare:
 	go tool pprof -http=$(PROFILE_UI_PORT_GOROUTINE_COMPARE) $$file1 $$file2
 
 test:
-	go test ./...
+	go test ./... -count=1 -cover -json | tparse -all
 
 loadtest: loadtest-v1
 

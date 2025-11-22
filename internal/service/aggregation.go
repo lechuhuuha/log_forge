@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
@@ -57,10 +59,40 @@ func (a *AggregationService) Start(ctx context.Context) {
 }
 
 func (a *AggregationService) runOnce(ctx context.Context) {
-	if err := a.AggregateCurrentHour(ctx); err != nil {
+	if err := a.AggregateAll(ctx); err != nil {
 		a.logger.Error("aggregation run failed", loggerpkg.F("error", err))
 	}
 	metrics.IncAggregationRuns()
+}
+
+// AggregateAll walks the logs directory and aggregates every discovered hour file.
+func (a *AggregationService) AggregateAll(ctx context.Context) error {
+	return filepath.WalkDir(a.logsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			a.logger.Warn("skip path during aggregation walk", loggerpkg.F("path", path), loggerpkg.F("error", err))
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".log.json") {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		hourStart, ok := a.parseHourFromPath(path)
+		if !ok {
+			a.logger.Warn("skip unexpected log path", loggerpkg.F("path", path))
+			return nil
+		}
+
+		if err := a.aggregateFile(ctx, path, hourStart); err != nil {
+			a.logger.Error("aggregate hour failed", loggerpkg.F("path", path), loggerpkg.F("error", err))
+		}
+		return nil
+	})
 }
 
 // AggregateCurrentHour aggregates logs for the current UTC hour.
@@ -80,6 +112,26 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 	dateDir := hourStart.Format(util.DateLayout)
 	hourFile := fmt.Sprintf("%s.log.json", hourStart.Format(util.HourLayout))
 	filePath := filepath.Join(a.logsDir, dateDir, hourFile)
+
+	return a.aggregateFile(ctx, filePath, hourStart)
+}
+
+func (a *AggregationService) aggregateFile(ctx context.Context, filePath string, hourStart time.Time) error {
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat log file: %w", err)
+	}
+
+	summaryPath := a.summaryPath(hourStart)
+	if summaryInfo, err := os.Stat(summaryPath); err == nil {
+		if !summaryInfo.ModTime().Before(fileInfo.ModTime()) {
+			// summary is up-to-date with the log file
+			return nil
+		}
+	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -113,18 +165,22 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 		return fmt.Errorf("scan log file: %w", err)
 	}
 
+	return a.writeSummary(hourStart, requestsPerPath, requestsPerUserAgent)
+}
+
+func (a *AggregationService) writeSummary(hourStart time.Time, requestsPerPath, requestsPerUserAgent map[string]int) error {
 	summary := map[string]any{
 		"hour":                 hourStart.Format(time.RFC3339),
 		"requestsPerPath":      requestsPerPath,
 		"requestsPerUserAgent": requestsPerUserAgent,
 	}
 
-	dateDirAnalytics := filepath.Join(a.analyticsDir, dateDir)
+	dateDirAnalytics := filepath.Dir(a.summaryPath(hourStart))
 	if err := os.MkdirAll(dateDirAnalytics, 0o755); err != nil {
 		return fmt.Errorf("create analytics directory: %w", err)
 	}
 
-	summaryPath := filepath.Join(dateDirAnalytics, fmt.Sprintf("summary_%s.json", hourStart.Format(util.HourLayout)))
+	summaryPath := a.summaryPath(hourStart)
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal summary: %w", err)
@@ -134,4 +190,38 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 	}
 
 	return nil
+}
+
+func (a *AggregationService) summaryPath(hourStart time.Time) string {
+	dateDir := hourStart.Format(util.DateLayout)
+	dateDirAnalytics := filepath.Join(a.analyticsDir, dateDir)
+	return filepath.Join(dateDirAnalytics, fmt.Sprintf("summary_%s.json", hourStart.Format(util.HourLayout)))
+}
+
+func (a *AggregationService) parseHourFromPath(path string) (time.Time, bool) {
+	rel, err := filepath.Rel(a.logsDir, path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	dateDir := filepath.Dir(rel)
+	base := filepath.Base(rel)
+	if dateDir == "." {
+		return time.Time{}, false
+	}
+	if !strings.HasSuffix(base, ".log.json") {
+		return time.Time{}, false
+	}
+	hourStr := strings.TrimSuffix(base, ".log.json")
+
+	dateParsed, err := time.Parse(util.DateLayout, dateDir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	hourParsed, err := time.Parse(util.HourLayout, hourStr)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	hourStart := time.Date(dateParsed.Year(), dateParsed.Month(), dateParsed.Day(), hourParsed.Hour(), 0, 0, 0, time.UTC)
+	return hourStart, true
 }

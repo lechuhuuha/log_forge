@@ -19,7 +19,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 ## Overview
 - **Log ingestion:** `POST /logs` accepts JSON arrays or CSV batches (`timestamp`, `path`, `userAgent`). Validation is uniform across both versions.
 - **Storage:** Records are appended to `logs/YYYY-MM-DD/HH.log.json` using NDJSON.
-- **Aggregation:** Every 30s a background worker summarizes the current UTC hour into `analytics/YYYY-MM-DD/summary_<HH>.json`, capturing counts per path and user agent.
+- **Aggregation:** Every 30s a background worker walks stored log files and summarizes each hour into `analytics/YYYY-MM-DD/summary_<HH>.json`, skipping hours whose summaries are already up to date.
 - **Metrics:** `/metrics` exposes custom counters (`log_batches_received_total`, `invalid_requests_total`, `logs_ingested_total`, `ingest_errors_total`, `aggregation_runs_total`) plus a queue-depth gauge and Go/process runtime metrics.
 - **Modes:** Version 1 writes directly to storage; Version 2 enqueues to Kafka and persists asynchronously via consumer goroutines.
 
