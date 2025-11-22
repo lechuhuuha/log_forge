@@ -33,7 +33,7 @@ func (q *benchmarkQueue) EnqueueBatch(ctx context.Context, records []domain.LogR
 	return q.err
 }
 
-func (q *benchmarkQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.LogRecord)) error {
+func (q *benchmarkQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
 	return nil
 }
 

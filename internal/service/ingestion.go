@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +31,9 @@ const (
 	defaultProducerWorkers       = 10
 	defaultProducerWriteTimeout  = 10 * time.Second
 	defaultQueueHighWaterPercent = 0.9
+	defaultProducerMaxRetries    = 3
+	defaultProducerRetryBackoff  = 200 * time.Millisecond
+	defaultProducerDLQDir        = "dlq/producer"
 )
 
 var (
@@ -40,6 +47,9 @@ type IngestionConfig struct {
 	ProducerWorkers       int
 	ProducerWriteTimeout  time.Duration
 	QueueHighWaterPercent float64
+	ProducerMaxRetries    int
+	ProducerRetryBackoff  time.Duration
+	ProducerDLQDir        string
 }
 
 // IngestionService orchestrates log ingestion across versions.
@@ -61,6 +71,9 @@ type IngestionService struct {
 	producerWorkers       int
 	producerWriteTimeout  time.Duration
 	queueHighWaterPercent float64
+	producerMaxRetries    int
+	producerRetryBackoff  time.Duration
+	producerDLQDir        string
 }
 
 // NewIngestionService creates a new ingestion service.
@@ -73,6 +86,9 @@ func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode Pipe
 	workers := defaultProducerWorkers
 	writeTimeout := defaultProducerWriteTimeout
 	highWater := defaultQueueHighWaterPercent
+	maxRetries := defaultProducerMaxRetries
+	retryBackoff := defaultProducerRetryBackoff
+	dlqDir := defaultProducerDLQDir
 	if cfg != nil {
 		if cfg.QueueBufferSize > 0 {
 			bufferSize = cfg.QueueBufferSize
@@ -85,6 +101,15 @@ func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode Pipe
 		}
 		if cfg.QueueHighWaterPercent > 0 {
 			highWater = cfg.QueueHighWaterPercent
+		}
+		if cfg.ProducerMaxRetries >= 0 {
+			maxRetries = cfg.ProducerMaxRetries
+		}
+		if cfg.ProducerRetryBackoff > 0 {
+			retryBackoff = cfg.ProducerRetryBackoff
+		}
+		if cfg.ProducerDLQDir != "" {
+			dlqDir = cfg.ProducerDLQDir
 		}
 	}
 
@@ -103,6 +128,9 @@ func NewIngestionService(store domain.LogStore, queue domain.LogQueue, mode Pipe
 			producerWorkers:       workers,
 			producerWriteTimeout:  writeTimeout,
 			queueHighWaterPercent: highWater,
+			producerMaxRetries:    maxRetries,
+			producerRetryBackoff:  retryBackoff,
+			producerDLQDir:        dlqDir,
 		}
 		for i := 0; i < workers; i++ {
 			svc.wg.Add(1)
@@ -126,16 +154,74 @@ func (s *IngestionService) runProducer(workerID int) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		produceCtx, cancel := context.WithTimeout(ctx, s.producerWriteTimeout)
-		if err := s.queue.EnqueueBatch(produceCtx, batch); err != nil {
-			metrics.IncIngestErrors()
-			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err), loggerpkg.F("worker_id", workerID))
-			cancel()
-			continue
+		success := s.tryEnqueueWithRetry(ctx, batch, workerID)
+		if !success {
+			s.writeProducerDLQ(batch, fmt.Errorf("enqueue failed after %d retries", s.producerMaxRetries))
 		}
-		cancel()
 		metrics.SetIngestionQueueDepth(len(s.workCh))
 	}
+}
+
+func (s *IngestionService) tryEnqueueWithRetry(ctx context.Context, batch []domain.LogRecord, workerID int) bool {
+	maxAttempts := s.producerMaxRetries + 1
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		produceCtx, cancel := context.WithTimeout(ctx, s.producerWriteTimeout)
+		err := s.queue.EnqueueBatch(produceCtx, batch)
+		cancel()
+		if err == nil {
+			return true
+		}
+		metrics.IncIngestErrors()
+		s.logger.Error("failed to enqueue logs",
+			loggerpkg.F("error", err),
+			loggerpkg.F("worker_id", workerID),
+			loggerpkg.F("attempt", attempt),
+			loggerpkg.F("max_attempts", maxAttempts))
+		if attempt == maxAttempts {
+			return false
+		}
+		backoff := s.producerRetryBackoff * time.Duration(attempt)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(backoff):
+		}
+	}
+	return false
+}
+
+func (s *IngestionService) writeProducerDLQ(batch []domain.LogRecord, reason error) {
+	if s.producerDLQDir == "" || len(batch) == 0 {
+		return
+	}
+	dateDir := time.Now().UTC().Format("2006-01-02")
+	path := filepath.Join(s.producerDLQDir, dateDir, fmt.Sprintf("producer_%d.json", time.Now().UTC().UnixNano()))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		s.logger.Warn("failed to create producer dlq directory", loggerpkg.F("error", err))
+		return
+	}
+	entry := struct {
+		Records []domain.LogRecord `json:"records"`
+		Reason  string             `json:"reason"`
+		Time    time.Time          `json:"time"`
+	}{
+		Records: batch,
+		Reason:  reason.Error(),
+		Time:    time.Now().UTC(),
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		s.logger.Warn("failed to marshal producer dlq batch", loggerpkg.F("error", err))
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		s.logger.Warn("failed to write producer dlq batch", loggerpkg.F("error", err), loggerpkg.F("path", path))
+		return
+	}
+	s.logger.Warn("wrote producer batch to dlq", loggerpkg.F("path", path), loggerpkg.F("count", len(batch)))
 }
 
 // Mode returns the configured pipeline mode.

@@ -31,14 +31,16 @@ func BenchmarkConsumerBatchWriter_AddAndFlush(b *testing.B) {
 	writer := newConsumerBatchWriter(context.Background(), store, cfg, nil)
 	b.Cleanup(writer.Close)
 
-	rec := domain.LogRecord{
-		Timestamp: time.Now().UTC(),
-		Path:      "/bench",
-		UserAgent: "ua",
+	msg := domain.ConsumedMessage{
+		Record: domain.LogRecord{
+			Timestamp: time.Now().UTC(),
+			Path:      "/bench",
+			UserAgent: "ua",
+		},
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		writer.Add(rec)
+		writer.Add(msg)
 	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -29,9 +30,13 @@ type mockQueue struct {
 	batches [][]domain.LogRecord
 	err     error
 	notify  chan struct{}
+	callCnt int
 }
 
 func (m *mockQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord) error {
+	m.mu.Lock()
+	m.callCnt++
+	m.mu.Unlock()
 	if m.err == nil {
 		m.mu.Lock()
 		cp := make([]domain.LogRecord, len(records))
@@ -48,7 +53,7 @@ func (m *mockQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord
 	return m.err
 }
 
-func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.LogRecord)) error {
+func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
 	return nil
 }
 
@@ -128,5 +133,59 @@ func TestIngestionService_ProcessBatch(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIngestionService_QueueModeWritesDLQOnFailure(t *testing.T) {
+	dlqDir := filepath.Join(t.TempDir(), "dlq")
+	q := &mockQueue{err: context.DeadlineExceeded}
+	cfg := &IngestionConfig{
+		QueueBufferSize:      1,
+		ProducerWorkers:      1,
+		ProducerWriteTimeout: 5 * time.Millisecond,
+		ProducerMaxRetries:   1,
+		ProducerRetryBackoff: 1 * time.Millisecond,
+		ProducerDLQDir:       dlqDir,
+	}
+	svc := NewIngestionService(nil, q, ModeQueue, loggerpkg.NewNop(), cfg)
+	t.Cleanup(svc.Close)
+
+	records := []domain.LogRecord{{
+		Timestamp: time.Now(),
+		Path:      "/fail",
+		UserAgent: "ua",
+	}}
+
+	if err := svc.ProcessBatch(context.Background(), records); err != nil {
+		t.Fatalf("ProcessBatch returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		q.mu.Lock()
+		callCnt := q.callCnt
+		q.mu.Unlock()
+		if callCnt >= 2 { // initial try + 1 retry
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected retries to occur, callCnt=%d", callCnt)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// DLQ file should exist
+	deadline = time.Now().Add(500 * time.Millisecond)
+	found := false
+	for !found && time.Now().Before(deadline) {
+		matches, _ := filepath.Glob(filepath.Join(dlqDir, "*", "producer_*.json"))
+		if len(matches) > 0 {
+			found = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("expected producer DLQ file to be written")
 	}
 }

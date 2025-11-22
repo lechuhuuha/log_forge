@@ -144,12 +144,17 @@ func (q *KafkaLogQueue) EnqueueBatch(ctx context.Context, records []domain.LogRe
 }
 
 // StartConsumers spawns background consumer goroutines.
-func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.LogRecord)) error {
+func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
 	if handler == nil {
 		return errors.New("handler required")
 	}
 	if q.consumers <= 0 {
 		q.consumers = 1
+	}
+	if q.readerCfg.CommitInterval == 0 {
+		// leave zero as explicit "no auto-commit"
+	} else {
+		q.readerCfg.CommitInterval = 0
 	}
 	for i := 0; i < q.consumers; i++ {
 		reader := kafka.NewReader(q.readerCfg)
@@ -164,7 +169,7 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 	return nil
 }
 
-func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, domain.LogRecord), idx int) {
+func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, domain.ConsumedMessage), idx int) {
 	defer func() {
 		reader.Close()
 		q.logger.Info("kafka consumer stopped", loggerpkg.F("index", idx))
@@ -173,7 +178,7 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 	var rec domain.LogRecord
 
 	for {
-		msg, err := reader.ReadMessage(ctx)
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return
@@ -197,7 +202,15 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 			atomic.AddInt32(&q.activeConsumers, -1)
 			continue
 		}
-		handler(ctx, rec)
+		commitFn := func(c context.Context) error {
+			return reader.CommitMessages(c, msg)
+		}
+		handler(ctx, domain.ConsumedMessage{
+			Record:    rec,
+			Partition: msg.Partition,
+			Offset:    msg.Offset,
+			Commit:    commitFn,
+		})
 		atomic.AddInt32(&q.activeConsumers, -1)
 	}
 }

@@ -15,6 +15,6 @@ func (NoopQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord) e
 }
 
 // StartConsumers is a no-op for Version 1.
-func (NoopQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.LogRecord)) error {
+func (NoopQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
 	return nil
 }

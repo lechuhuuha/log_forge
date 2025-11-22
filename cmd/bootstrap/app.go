@@ -176,8 +176,8 @@ func (a *App) Run(ctx context.Context) error {
 				batchWriter.Close()
 			}()
 
-			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, rec domain.LogRecord) {
-				batchWriter.Add(rec)
+			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, msg domain.ConsumedMessage) {
+				batchWriter.Add(msg)
 			}); err != nil {
 				return fmt.Errorf("start kafka consumers: %w", err)
 			}
