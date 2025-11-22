@@ -35,7 +35,7 @@ func TestAggregationServiceAggregateHour(t *testing.T) {
 		t.Fatalf("AggregateHour returned error: %v", err)
 	}
 
-	summaryPath := filepath.Join(analyticsDir, "summary_14.json")
+	summaryPath := filepath.Join(analyticsDir, hour.Format(util.DateLayout), "summary_14.json")
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
 		t.Fatalf("expected summary file, got error: %v", err)

@@ -119,11 +119,12 @@ func (a *AggregationService) AggregateHour(ctx context.Context, ts time.Time) er
 		"requestsPerUserAgent": requestsPerUserAgent,
 	}
 
-	if err := os.MkdirAll(a.analyticsDir, 0o755); err != nil {
+	dateDirAnalytics := filepath.Join(a.analyticsDir, dateDir)
+	if err := os.MkdirAll(dateDirAnalytics, 0o755); err != nil {
 		return fmt.Errorf("create analytics directory: %w", err)
 	}
 
-	summaryPath := filepath.Join(a.analyticsDir, fmt.Sprintf("summary_%s.json", hourStart.Format(util.HourLayout)))
+	summaryPath := filepath.Join(dateDirAnalytics, fmt.Sprintf("summary_%s.json", hourStart.Format(util.HourLayout)))
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal summary: %w", err)
