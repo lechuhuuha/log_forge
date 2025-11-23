@@ -45,12 +45,12 @@ func (a *AggregationService) Start(ctx context.Context) {
 		defer ticker.Stop()
 
 		// Run immediately once at startup.
-		a.runOnce(ctx)
+		a.run(ctx)
 
 		for {
 			select {
 			case <-ticker.C:
-				a.runOnce(ctx)
+				a.run(ctx)
 			case <-ctx.Done():
 				return
 			}
@@ -58,7 +58,7 @@ func (a *AggregationService) Start(ctx context.Context) {
 	}()
 }
 
-func (a *AggregationService) runOnce(ctx context.Context) {
+func (a *AggregationService) run(ctx context.Context) {
 	if err := a.AggregateAll(ctx); err != nil {
 		a.logger.Error("aggregation run failed", loggerpkg.F("error", err))
 	}

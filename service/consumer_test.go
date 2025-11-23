@@ -28,7 +28,7 @@ func BenchmarkConsumerBatchWriter_AddAndFlush(b *testing.B) {
 		FlushInterval:  time.Hour,   // avoid timer-driven flush during the bench
 		PersistTimeout: time.Second, // small, but unused because SaveBatch is fast
 	}
-	writer := newConsumerBatchWriter(context.Background(), store, cfg, nil)
+	writer := newConsumerWriter(context.Background(), store, cfg, nil)
 	b.Cleanup(writer.Close)
 
 	msg := model.ConsumedMessage{

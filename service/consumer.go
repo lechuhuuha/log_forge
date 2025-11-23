@@ -68,7 +68,7 @@ func (c *ConsumerService) Start(ctx context.Context) error {
 			c.startErr = errors.New("log queue not configured")
 			return
 		}
-		c.writer = newConsumerBatchWriter(ctx, c.repo, c.cfg, c.logger)
+		c.writer = newConsumerWriter(ctx, c.repo, c.cfg, c.logger)
 		if err := c.queue.StartConsumers(ctx, func(consCtx context.Context, msg model.ConsumedMessage) {
 			c.writer.Add(msg)
 		}); err != nil {
@@ -109,7 +109,7 @@ type consumerBatchWriter struct {
 	done    chan struct{}
 }
 
-func newConsumerBatchWriter(ctx context.Context, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger) *consumerBatchWriter {
+func newConsumerWriter(ctx context.Context, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger) *consumerBatchWriter {
 	if ctx == nil {
 		ctx = context.Background()
 	}
