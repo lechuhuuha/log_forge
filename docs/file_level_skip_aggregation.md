@@ -3,7 +3,7 @@ File-level skip aggregation
 - HTTP ingest: `/logs` receives JSON/CSV; handler validates records and hands batches to the ingestion service.
 - Ingestion service (direct mode):
   - Uses ModeDirect (no Kafka).
-  - Calls `FileLogStore.SaveBatch`, grouping records by hour and appending NDJSON to `logs/YYYY-MM-DD/HH.log.json`.
+  - Calls the file repository `SaveBatch`, grouping records by hour and appending NDJSON to `logs/YYYY-MM-DD/HH.log.json`.
 - Aggregation with file-level skip:
   - Runs on a timer (config: `aggregation.interval`).
   - Walks all `logs/` files, parses their hour, and writes/refreshes summaries in `analytics/YYYY-MM-DD/summary_<HH>.json`.

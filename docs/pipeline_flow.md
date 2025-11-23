@@ -2,7 +2,7 @@ Pipeline v2 flow
 
 - HTTP ingest: `/logs` receives JSON/CSV; handler validates records and hands batches to the ingestion service.
 - Ingestion service (producers):
-  - Builds a buffered channel (config: `ingestion.queueBufferSize`).
+  - Uses a `ProducerService` with a buffered channel (config: `ingestion.queueBufferSize`).
   - Spawns producer workers (config: `ingestion.producerWorkers`).
   - Each worker pulls batches from the channel and calls `KafkaLogQueue.EnqueueBatch` with retries and a write timeout (config: `ingestion.producerWriteTimeout`, `ingestion.producerMaxRetries`, `ingestion.producerRetryBackoff`).
   - Warns when the channel is near capacity (config: `ingestion.queueHighWaterPercent`).
@@ -13,10 +13,10 @@ Pipeline v2 flow
 - Kafka consumers:
   - `kafka.consumers` controls how many consumer goroutines we start (one reader each; Kafka assigns partitions).
   - Each consumer fetches without auto-commit, unmarshals to `LogRecord`, and passes along a commit hook to the consumer batch writer.
-- Consumer batch writer (to disk):
+- Consumer service + batch writer (to repo):
   - Buffers records in memory with commit metadata.
   - Flush triggers when size hits `consumer.flushSize` or time hits `consumer.flushInterval`.
-  - Saves to files via `SaveBatch` with timeout `consumer.persistTimeout`; after success it commits offsets.
+  - Saves to files via the repo `SaveBatch` with timeout `consumer.persistTimeout`; after success it commits offsets.
   - On persist failure, writes a DLQ file with partition/offset info (`consumer.dlqDir`) and leaves messages uncommitted for retry.
 - Aggregation:
   - Runs on a timer (config: `aggregation.interval`).
