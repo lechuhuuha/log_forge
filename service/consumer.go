@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,68 @@ type ConsumerBatchConfig struct {
 	FlushInterval  time.Duration
 	PersistTimeout time.Duration
 	DLQDir         string
+}
+
+// ConsumerService wires queue consumers to a batch writer.
+type ConsumerService struct {
+	queue  domain.LogQueue
+	store  domain.LogStore
+	cfg    ConsumerBatchConfig
+	logger loggerpkg.Logger
+	closer func() error
+
+	writer    *consumerBatchWriter
+	startOnce sync.Once
+	startErr  error
+	closeOnce sync.Once
+}
+
+// NewConsumerService builds a consumer service.
+func NewConsumerService(q domain.LogQueue, store domain.LogStore, cfg ConsumerBatchConfig, logr loggerpkg.Logger, closer func() error) *ConsumerService {
+	if logr == nil {
+		logr = loggerpkg.NewNop()
+	}
+	return &ConsumerService{
+		queue:  q,
+		store:  store,
+		cfg:    cfg,
+		logger: logr,
+		closer: closer,
+	}
+}
+
+// Start launches consumers and batch writer; safe to call once.
+func (c *ConsumerService) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.startOnce.Do(func() {
+		if c.queue == nil {
+			c.startErr = errors.New("log queue not configured")
+			return
+		}
+		c.writer = newConsumerBatchWriter(ctx, c.store, c.cfg, c.logger)
+		if err := c.queue.StartConsumers(ctx, func(consCtx context.Context, msg domain.ConsumedMessage) {
+			c.writer.Add(msg)
+		}); err != nil {
+			c.startErr = err
+			c.writer.Close()
+			c.writer = nil
+		}
+	})
+	return c.startErr
+}
+
+// Close stops consumers and writer; safe to call multiple times.
+func (c *ConsumerService) Close() {
+	c.closeOnce.Do(func() {
+		if c.writer != nil {
+			c.writer.Close()
+		}
+		if c.closer != nil {
+			_ = c.closer()
+		}
+	})
 }
 
 // consumerBatchWriter coalesces records from Kafka consumers before hitting disk.

@@ -108,14 +108,15 @@ func (a *App) Run(ctx context.Context) error {
 
 		store := storage.NewFileLogStore(a.cfg.LogsDir, a.logger)
 		var (
-			queueImpl domain.LogQueue
-			mode      service.PipelineMode = service.ModeDirect
-			pipeline  *service.PipelineService
+			queueImpl   domain.LogQueue
+			mode        service.PipelineMode = service.ModeDirect
+			consumerSvc *service.ConsumerService
+			producerSvc *service.ProducerService
 		)
 
 		if a.cfg.Version == 2 {
 			mode = service.ModeQueue
-			if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) > 0 {
+			if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) == 0 {
 				return fmt.Errorf("kafka settings are required for version 2")
 			}
 
@@ -140,17 +141,12 @@ func (a *App) Run(ctx context.Context) error {
 			}
 
 			queueImpl = kafkaQueue
-			pipeline = service.NewPipelineService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
-			if err := pipeline.Start(ctx); err != nil {
+			consumerSvc = service.NewConsumerService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
+			if err := consumerSvc.Start(ctx); err != nil {
 				return fmt.Errorf("start kafka consumers: %w", err)
 			}
-			defer pipeline.Close()
-		} else {
-			queueImpl = queue.NoopQueue{}
-		}
+			defer consumerSvc.Close()
 
-		var producerSvc *service.ProducerService
-		if mode == service.ModeQueue {
 			producerCfg := &service.ProducerConfig{
 				QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
 				Workers:               a.cfg.Ingestion.ProducerWorkers,
@@ -160,6 +156,8 @@ func (a *App) Run(ctx context.Context) error {
 			producerSvc = service.NewProducerService(queueImpl, a.logger, producerCfg)
 			producerSvc.Start()
 			defer producerSvc.Close()
+		} else {
+			queueImpl = queue.NoopQueue{}
 		}
 
 		ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
