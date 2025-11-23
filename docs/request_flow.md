@@ -4,7 +4,7 @@ flowchart TD
     HTTP[net/http server\ncmd/bootstrap/app.go]
     LogsHandler[/POST /logs\ninternal/http/handler.go/]
     Ingestion[IngestionService\nservice/ingestion.go]
-    Store[FileLogStore\ninternal/storage/file_store.go]
+    Store[FileRepo\nrepo/file_repo.go]
     KafkaWriter[kafka-go Writer\ninternal/queue/kafka_queue.go]
     Kafka[(Kafka topic logs)]
     Consumers{{Consumer goroutines}}

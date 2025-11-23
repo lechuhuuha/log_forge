@@ -1,4 +1,4 @@
-package storage
+package repo
 
 import (
 	"context"
@@ -13,20 +13,20 @@ import (
 	"github.com/lechuhuuha/log_forge/util"
 )
 
-// FileLogStore persists logs to disk using an hourly NDJSON layout.
-type FileLogStore struct {
+// FileRepo persists logs to disk using an hourly NDJSON layout.
+type FileRepo struct {
 	baseDir   string
 	logger    loggerpkg.Logger
 	mu        sync.Mutex
 	fileLocks map[string]*sync.Mutex
 }
 
-// NewFileLogStore returns a new file-backed LogStore implementation.
-func NewFileLogStore(baseDir string, logr loggerpkg.Logger) *FileLogStore {
+// NewFileRepo returns a new file-backed Repository implementation.
+func NewFileRepo(baseDir string, logr loggerpkg.Logger) *FileRepo {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
-	return &FileLogStore{
+	return &FileRepo{
 		baseDir:   baseDir,
 		logger:    logr,
 		fileLocks: make(map[string]*sync.Mutex),
@@ -34,7 +34,7 @@ func NewFileLogStore(baseDir string, logr loggerpkg.Logger) *FileLogStore {
 }
 
 // SaveBatch appends the provided records to the correct hourly files.
-func (s *FileLogStore) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (s *FileRepo) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -63,7 +63,7 @@ func (s *FileLogStore) SaveBatch(ctx context.Context, records []domain.LogRecord
 	return nil
 }
 
-func (s *FileLogStore) appendRecords(path string, records []domain.LogRecord) error {
+func (s *FileRepo) appendRecords(path string, records []domain.LogRecord) error {
 	lock := s.lockFor(path)
 	lock.Lock()
 	defer lock.Unlock()
@@ -86,7 +86,7 @@ func (s *FileLogStore) appendRecords(path string, records []domain.LogRecord) er
 	return nil
 }
 
-func (s *FileLogStore) lockFor(path string) *sync.Mutex {
+func (s *FileRepo) lockFor(path string) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lock, ok := s.fileLocks[path]

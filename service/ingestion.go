@@ -8,6 +8,7 @@ import (
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/repo"
 )
 
 // PipelineMode determines how ingestion behaves.
@@ -27,7 +28,7 @@ var (
 
 // IngestionService orchestrates log ingestion across versions.
 type IngestionService struct {
-	store    domain.LogStore
+	repo     repo.Repository
 	producer Producer
 	mode     PipelineMode
 	logger   loggerpkg.Logger
@@ -36,12 +37,12 @@ type IngestionService struct {
 }
 
 // NewIngestionService creates a new ingestion service.
-func NewIngestionService(store domain.LogStore, producer Producer, mode PipelineMode, logr loggerpkg.Logger) *IngestionService {
+func NewIngestionService(repository repo.Repository, producer Producer, mode PipelineMode, logr loggerpkg.Logger) *IngestionService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
 	return &IngestionService{
-		store:    store,
+		repo:     repository,
 		producer: producer,
 		mode:     mode,
 		logger:   logr,
@@ -77,10 +78,10 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.Lo
 	case ModeDirect:
 		fallthrough
 	default:
-		if s.store == nil {
+		if s.repo == nil {
 			return errors.New("log store not configured")
 		}
-		if err := s.store.SaveBatch(ctx, records); err != nil {
+		if err := s.repo.SaveBatch(ctx, records); err != nil {
 			metrics.IncIngestErrors()
 			s.logger.Error("failed to save logs", loggerpkg.F("error", err))
 			return err

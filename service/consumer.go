@@ -13,6 +13,7 @@ import (
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/repo"
 )
 
 const (
@@ -32,7 +33,7 @@ type ConsumerBatchConfig struct {
 // ConsumerService wires queue consumers to a batch writer.
 type ConsumerService struct {
 	queue  domain.LogQueue
-	store  domain.LogStore
+	repo   repo.Repository
 	cfg    ConsumerBatchConfig
 	logger loggerpkg.Logger
 	closer func() error
@@ -44,13 +45,13 @@ type ConsumerService struct {
 }
 
 // NewConsumerService builds a consumer service.
-func NewConsumerService(q domain.LogQueue, store domain.LogStore, cfg ConsumerBatchConfig, logr loggerpkg.Logger, closer func() error) *ConsumerService {
+func NewConsumerService(q domain.LogQueue, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger, closer func() error) *ConsumerService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
 	return &ConsumerService{
 		queue:  q,
-		store:  store,
+		repo:   repository,
 		cfg:    cfg,
 		logger: logr,
 		closer: closer,
@@ -67,7 +68,7 @@ func (c *ConsumerService) Start(ctx context.Context) error {
 			c.startErr = errors.New("log queue not configured")
 			return
 		}
-		c.writer = newConsumerBatchWriter(ctx, c.store, c.cfg, c.logger)
+		c.writer = newConsumerBatchWriter(ctx, c.repo, c.cfg, c.logger)
 		if err := c.queue.StartConsumers(ctx, func(consCtx context.Context, msg domain.ConsumedMessage) {
 			c.writer.Add(msg)
 		}); err != nil {
@@ -93,7 +94,7 @@ func (c *ConsumerService) Close() {
 
 // consumerBatchWriter coalesces records from Kafka consumers before hitting disk.
 type consumerBatchWriter struct {
-	store          domain.LogStore
+	repo           repo.Repository
 	logger         loggerpkg.Logger
 	flushSize      int
 	flushInterval  time.Duration
@@ -108,7 +109,7 @@ type consumerBatchWriter struct {
 	done    chan struct{}
 }
 
-func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, cfg ConsumerBatchConfig, logr loggerpkg.Logger) *consumerBatchWriter {
+func newConsumerBatchWriter(ctx context.Context, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger) *consumerBatchWriter {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -130,7 +131,7 @@ func newConsumerBatchWriter(ctx context.Context, store domain.LogStore, cfg Cons
 
 	batchCtx, cancel := context.WithCancel(ctx)
 	writer := &consumerBatchWriter{
-		store:          store,
+		repo:           repository,
 		logger:         logr,
 		flushSize:      cfg.FlushSize,
 		flushInterval:  cfg.FlushInterval,
@@ -232,7 +233,7 @@ func (w *consumerBatchWriter) persist(batch []domain.ConsumedMessage, force bool
 	for i := range batch {
 		records[i] = batch[i].Record
 	}
-	if err := w.store.SaveBatch(writeCtx, records); err != nil {
+	if err := w.repo.SaveBatch(writeCtx, records); err != nil {
 		metrics.IncIngestErrors()
 		w.logger.Error("consumer batch write failed",
 			loggerpkg.F("error", err),

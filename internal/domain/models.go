@@ -12,11 +12,6 @@ type LogRecord struct {
 	UserAgent string    `json:"userAgent"`
 }
 
-// LogStore persists log records (Version 1 direct writes, Version 2 consumers).
-type LogStore interface {
-	SaveBatch(ctx context.Context, records []LogRecord) error
-}
-
 // LogQueue abstracts the queue used in Version 2 (Kafka implementation).
 type LogQueue interface {
 	EnqueueBatch(ctx context.Context, records []LogRecord) error

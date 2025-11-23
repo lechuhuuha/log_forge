@@ -6,12 +6,12 @@ Use these guardrails whenever you add or modify code so the project keeps its cu
   - `cmd/bootstrap`: wire dependencies, load config, start servers/workers. Keep it free of business logic.
   - `internal/domain`: define small interfaces (`LogStore`, `LogQueue`, etc.) and shared models only.
 - `service`: orchestration/services that depend on domain interfaces (e.g., ingestion, aggregation).
-  - `internal/storage`, `internal/queue`: concrete infrastructure that satisfies domain interfaces.
+- `repo`, `internal/queue`: concrete infrastructure that satisfies domain interfaces.
   - `internal/http`: thin handlers (parse + validate + delegate).
   - `internal/metrics`: counters/gauges; register idempotently.
 
 - **Dependency injection**
-- Constructors accept interfaces and configs, return concrete structs (e.g., `NewIngestionService(store LogStore, producer Producer, ...)`).
+- Constructors accept interfaces and configs, return concrete structs (e.g., `NewIngestionService(repo Repository, producer Producer, ...)`).
   - Prefer interface fields on structs; inject implementations from `cmd/bootstrap`.
   - Always accept a `logger.Logger`; default to `logger.NewNop()` if `nil`.
   - Config structs collect tuning knobs; apply defaults in constructors when values are zero.

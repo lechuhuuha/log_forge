@@ -11,12 +11,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/lechuhuuha/log_forge/config"
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	httpapi "github.com/lechuhuuha/log_forge/internal/http"
 	"github.com/lechuhuuha/log_forge/internal/profileutil"
 	"github.com/lechuhuuha/log_forge/internal/queue"
-	"github.com/lechuhuuha/log_forge/internal/storage"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/repo"
 	"github.com/lechuhuuha/log_forge/service"
 	"github.com/lechuhuuha/log_forge/util"
 )
@@ -83,7 +82,12 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		ctx = context.Background()
 	}
 
-	cleanup := func() {}
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
 
 	consumerBatchCfg := service.ConsumerBatchConfig{
 		FlushSize:      a.cfg.Consumer.FlushSize,
@@ -91,9 +95,8 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		PersistTimeout: a.cfg.Consumer.PersistTimeout,
 	}
 
-	store := storage.NewFileLogStore(a.cfg.LogsDir, a.logger)
+	store := repo.NewFileRepo(a.cfg.LogsDir, a.logger)
 	var (
-		queueImpl   domain.LogQueue
 		mode        service.PipelineMode = service.ModeDirect
 		consumerSvc *service.ConsumerService
 		producerSvc *service.ProducerService
@@ -102,7 +105,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 	if a.cfg.Version == 2 {
 		mode = service.ModeQueue
 		if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) == 0 {
-			return nil, cleanup, fmt.Errorf("kafka settings are required for version 2")
+			return nil, runCleanups, fmt.Errorf("kafka settings are required for version 2")
 		}
 
 		batchTimeout := a.cfg.KafkaSettings.BatchTimeout
@@ -122,14 +125,14 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			Async:          a.cfg.KafkaSettings.Async,
 		}, a.logger)
 		if err != nil {
-			return nil, cleanup, fmt.Errorf("configure kafka: %w", err)
+			return nil, runCleanups, fmt.Errorf("configure kafka: %w", err)
 		}
 
-		queueImpl = kafkaQueue
-		consumerSvc = service.NewConsumerService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
+		consumerSvc = service.NewConsumerService(kafkaQueue, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
 		if err := consumerSvc.Start(ctx); err != nil {
-			return nil, cleanup, fmt.Errorf("start kafka consumers: %w", err)
+			return nil, runCleanups, fmt.Errorf("start kafka consumers: %w", err)
 		}
+		cleanups = append(cleanups, func() { consumerSvc.Close() })
 
 		producerCfg := &service.ProducerConfig{
 			QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
@@ -137,23 +140,15 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			WriteTimeout:          a.cfg.Ingestion.ProducerWriteTimeout,
 			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
 		}
-		producerSvc = service.NewProducerService(queueImpl, a.logger, producerCfg)
+		producerSvc = service.NewProducerService(kafkaQueue, a.logger, producerCfg)
 		producerSvc.Start()
-
-		prevCleanup := cleanup
-		cleanup = func() {
-			producerSvc.Close()
-			consumerSvc.Close()
-			prevCleanup()
-		}
-	} else {
-		queueImpl = queue.NoopQueue{}
+		cleanups = append(cleanups, func() { producerSvc.Close() })
 	}
 
 	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
 	aggSvc.Start(ctx)
-
 	ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
+	cleanups = append(cleanups, func() { ingestionSvc.Close() })
 
 	mux := http.NewServeMux()
 	handler := httpapi.NewHandler(ingestionSvc, a.logger)
@@ -169,13 +164,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		Handler: mux,
 	}
 
-	prevCleanup := cleanup
-	cleanup = func() {
-		ingestionSvc.Close()
-		prevCleanup()
-	}
-
-	return server, cleanup, nil
+	return server, runCleanups, nil
 }
 
 // Run starts the HTTP server and supporting goroutines until the context is canceled.

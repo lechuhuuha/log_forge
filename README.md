@@ -43,7 +43,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
   - `internal/domain`: `LogRecord`, `LogStore`, `LogQueue` definitions.
   - `internal/service`: ingestion orchestration (mode-aware) and aggregation worker.
   - `internal/http`: handlers and routing.
-  - `internal/storage`: file-based `LogStore` (mutex per file path, NDJSON writes).
+- `repo`: file-based repository (mutex per file path, NDJSON writes).
   - `internal/queue`: `NoopQueue` (v1) + Kafka implementation (v2).
   - `internal/metrics`: counters, Go/process collectors with idempotent registration.
 - **Configuration**

@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/repo"
 	"github.com/lechuhuuha/log_forge/service"
 )
 
@@ -32,7 +33,7 @@ func (m *mockStore) SaveBatch(ctx context.Context, records []domain.LogRecord) e
 	return m.err
 }
 
-func newHandlerWithStore(store domain.LogStore) *Handler {
+func newHandlerWithStore(store repo.Repository) *Handler {
 	ingestion := service.NewIngestionService(store, nil, service.ModeDirect, nil)
 	return NewHandler(ingestion, nil)
 }
