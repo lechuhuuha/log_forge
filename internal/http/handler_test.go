@@ -12,21 +12,21 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/repo"
 	"github.com/lechuhuuha/log_forge/service"
 )
 
 type mockStore struct {
 	callCount int
-	batches   [][]domain.LogRecord
+	batches   [][]model.LogRecord
 	err       error
 }
 
-func (m *mockStore) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (m *mockStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	m.callCount++
 	if m.err == nil {
-		cp := make([]domain.LogRecord, len(records))
+		cp := make([]model.LogRecord, len(records))
 		copy(cp, records)
 		m.batches = append(m.batches, cp)
 	}

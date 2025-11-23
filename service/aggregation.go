@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/util"
 )
 
@@ -153,7 +153,7 @@ func (a *AggregationService) aggregateFile(ctx context.Context, filePath string,
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		var rec domain.LogRecord
+		var rec model.LogRecord
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
 			a.logger.Warn("skip malformed log record", loggerpkg.F("error", err))
 			continue

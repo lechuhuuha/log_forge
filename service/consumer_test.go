@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
+	"github.com/lechuhuuha/log_forge/model"
 )
 
 type benchStore struct {
@@ -14,7 +14,7 @@ type benchStore struct {
 	count int
 }
 
-func (s *benchStore) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (s *benchStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	s.mu.Lock()
 	s.count += len(records)
 	s.mu.Unlock()
@@ -31,8 +31,8 @@ func BenchmarkConsumerBatchWriter_AddAndFlush(b *testing.B) {
 	writer := newConsumerBatchWriter(context.Background(), store, cfg, nil)
 	b.Cleanup(writer.Close)
 
-	msg := domain.ConsumedMessage{
-		Record: domain.LogRecord{
+	msg := model.ConsumedMessage{
+		Record: model.LogRecord{
 			Timestamp: time.Now().UTC(),
 			Path:      "/bench",
 			UserAgent: "ua",

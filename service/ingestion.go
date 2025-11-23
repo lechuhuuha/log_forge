@@ -5,9 +5,9 @@ import (
 	"errors"
 	"sync/atomic"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/repo"
 )
 
@@ -55,7 +55,7 @@ func (s *IngestionService) Mode() PipelineMode {
 }
 
 // ProcessBatch routes the logs to storage or queue depending on the mode.
-func (s *IngestionService) ProcessBatch(ctx context.Context, records []domain.LogRecord) error {
+func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.LogRecord) error {
 	if len(records) == 0 {
 		return nil
 	}

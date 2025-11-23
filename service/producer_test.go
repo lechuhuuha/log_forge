@@ -7,25 +7,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 )
 
 type mockQueue struct {
 	mu      sync.Mutex
-	batches [][]domain.LogRecord
+	batches [][]model.LogRecord
 	err     error
 	notify  chan struct{}
 	callCnt int
 }
 
-func (m *mockQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord) error {
+func (m *mockQueue) EnqueueBatch(ctx context.Context, records []model.LogRecord) error {
 	m.mu.Lock()
 	m.callCnt++
 	m.mu.Unlock()
 	if m.err == nil {
 		m.mu.Lock()
-		cp := make([]domain.LogRecord, len(records))
+		cp := make([]model.LogRecord, len(records))
 		copy(cp, records)
 		m.batches = append(m.batches, cp)
 		m.mu.Unlock()
@@ -39,12 +39,12 @@ func (m *mockQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord
 	return m.err
 }
 
-func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
+func (m *mockQueue) StartConsumers(ctx context.Context, handler func(context.Context, model.ConsumedMessage)) error {
 	return nil
 }
 
 func TestProducerService_Enqueue(t *testing.T) {
-	records := []domain.LogRecord{{
+	records := []model.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/home",
 		UserAgent: "ua",
@@ -88,7 +88,7 @@ func TestProducerService_WritesDLQOnFailure(t *testing.T) {
 	t.Cleanup(producer.Close)
 	producer.Start()
 
-	records := []domain.LogRecord{{
+	records := []model.LogRecord{{
 		Timestamp: time.Now(),
 		Path:      "/fail",
 		UserAgent: "ua",

@@ -4,9 +4,9 @@ Use these guardrails whenever you add or modify code so the project keeps its cu
 
 - **Package boundaries**
   - `cmd/bootstrap`: wire dependencies, load config, start servers/workers. Keep it free of business logic.
-  - `internal/domain`: define small interfaces (`LogStore`, `LogQueue`, etc.) and shared models only.
-- `service`: orchestration/services that depend on domain interfaces (e.g., ingestion, aggregation).
-- `repo`, `internal/queue`: concrete infrastructure that satisfies domain interfaces.
+  - `model`: define small interfaces/types (`LogQueue`, `LogRecord`, etc.) shared across packages.
+- `service`: orchestration/services that depend on shared interfaces (e.g., ingestion, aggregation).
+- `repo`, `internal/queue`: concrete infrastructure that satisfies model-level interfaces.
   - `internal/http`: thin handlers (parse + validate + delegate).
   - `internal/metrics`: counters/gauges; register idempotently.
 
@@ -47,6 +47,6 @@ Use these guardrails whenever you add or modify code so the project keeps its cu
   - Keep new dependencies minimal; prefer stdlib where possible.
 
 - **Extending with new interfaces**
-  - Define the interface in `internal/domain` if it’s cross-cutting; otherwise keep it package-local.
+  - Define the interface in `model` if it’s cross-cutting; otherwise keep it package-local.
   - Add the interface as a field on the consumer struct, accept it in the constructor, and set it in the struct literal.
   - Wire the concrete implementation in `cmd/bootstrap` (or tests) and keep the rest of the code referencing only the interface.

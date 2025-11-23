@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/util"
 )
 
@@ -34,12 +34,12 @@ func NewFileRepo(baseDir string, logr loggerpkg.Logger) *FileRepo {
 }
 
 // SaveBatch appends the provided records to the correct hourly files.
-func (s *FileRepo) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (s *FileRepo) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
 
-	grouped := make(map[string][]domain.LogRecord)
+	grouped := make(map[string][]model.LogRecord)
 	for _, rec := range records {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -63,7 +63,7 @@ func (s *FileRepo) SaveBatch(ctx context.Context, records []domain.LogRecord) er
 	return nil
 }
 
-func (s *FileRepo) appendRecords(path string, records []domain.LogRecord) error {
+func (s *FileRepo) appendRecords(path string, records []model.LogRecord) error {
 	lock := s.lockFor(path)
 	lock.Lock()
 	defer lock.Unlock()

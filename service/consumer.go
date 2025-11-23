@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/repo"
 )
 
@@ -32,7 +32,7 @@ type ConsumerBatchConfig struct {
 
 // ConsumerService wires queue consumers to a batch writer.
 type ConsumerService struct {
-	queue  domain.LogQueue
+	queue  model.LogQueue
 	repo   repo.Repository
 	cfg    ConsumerBatchConfig
 	logger loggerpkg.Logger
@@ -45,7 +45,7 @@ type ConsumerService struct {
 }
 
 // NewConsumerService builds a consumer service.
-func NewConsumerService(q domain.LogQueue, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger, closer func() error) *ConsumerService {
+func NewConsumerService(q model.LogQueue, repository repo.Repository, cfg ConsumerBatchConfig, logr loggerpkg.Logger, closer func() error) *ConsumerService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
@@ -69,7 +69,7 @@ func (c *ConsumerService) Start(ctx context.Context) error {
 			return
 		}
 		c.writer = newConsumerBatchWriter(ctx, c.repo, c.cfg, c.logger)
-		if err := c.queue.StartConsumers(ctx, func(consCtx context.Context, msg domain.ConsumedMessage) {
+		if err := c.queue.StartConsumers(ctx, func(consCtx context.Context, msg model.ConsumedMessage) {
 			c.writer.Add(msg)
 		}); err != nil {
 			c.startErr = err
@@ -105,7 +105,7 @@ type consumerBatchWriter struct {
 	cancel context.CancelFunc
 
 	mu      sync.Mutex
-	pending []domain.ConsumedMessage
+	pending []model.ConsumedMessage
 	done    chan struct{}
 }
 
@@ -139,7 +139,7 @@ func newConsumerBatchWriter(ctx context.Context, repository repo.Repository, cfg
 		dlqDir:         cfg.DLQDir,
 		ctx:            batchCtx,
 		cancel:         cancel,
-		pending:        make([]domain.ConsumedMessage, 0, cfg.FlushSize),
+		pending:        make([]model.ConsumedMessage, 0, cfg.FlushSize),
 		done:           make(chan struct{}),
 	}
 	go writer.flushLoop()
@@ -147,7 +147,7 @@ func newConsumerBatchWriter(ctx context.Context, repository repo.Repository, cfg
 }
 
 // Add appends a consumed message and triggers flush when the batch is full.
-func (w *consumerBatchWriter) Add(msg domain.ConsumedMessage) {
+func (w *consumerBatchWriter) Add(msg model.ConsumedMessage) {
 	if w == nil {
 		return
 	}
@@ -203,23 +203,23 @@ func (w *consumerBatchWriter) flush(force bool) {
 	w.persist(batch, force)
 }
 
-func (w *consumerBatchWriter) takePending() []domain.ConsumedMessage {
+func (w *consumerBatchWriter) takePending() []model.ConsumedMessage {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.drainLocked()
 }
 
-func (w *consumerBatchWriter) drainLocked() []domain.ConsumedMessage {
+func (w *consumerBatchWriter) drainLocked() []model.ConsumedMessage {
 	if len(w.pending) == 0 {
 		return nil
 	}
-	batch := make([]domain.ConsumedMessage, len(w.pending))
+	batch := make([]model.ConsumedMessage, len(w.pending))
 	copy(batch, w.pending)
 	w.pending = w.pending[:0]
 	return batch
 }
 
-func (w *consumerBatchWriter) persist(batch []domain.ConsumedMessage, force bool) {
+func (w *consumerBatchWriter) persist(batch []model.ConsumedMessage, force bool) {
 	if len(batch) == 0 {
 		return
 	}
@@ -229,7 +229,7 @@ func (w *consumerBatchWriter) persist(batch []domain.ConsumedMessage, force bool
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, w.persistTimeout)
 	defer cancel()
-	records := make([]domain.LogRecord, len(batch))
+	records := make([]model.LogRecord, len(batch))
 	for i := range batch {
 		records[i] = batch[i].Record
 	}
@@ -254,7 +254,7 @@ func (w *consumerBatchWriter) persist(batch []domain.ConsumedMessage, force bool
 	}
 }
 
-func (w *consumerBatchWriter) writeDLQ(batch []domain.ConsumedMessage, reason error) {
+func (w *consumerBatchWriter) writeDLQ(batch []model.ConsumedMessage, reason error) {
 	if w.dlqDir == "" {
 		return
 	}
@@ -266,10 +266,10 @@ func (w *consumerBatchWriter) writeDLQ(batch []domain.ConsumedMessage, reason er
 	}
 
 	type dlqEntry struct {
-		Record    domain.LogRecord `json:"record"`
-		Partition int              `json:"partition"`
-		Offset    int64            `json:"offset"`
-		Reason    string           `json:"reason"`
+		Record    model.LogRecord `json:"record"`
+		Partition int             `json:"partition"`
+		Offset    int64           `json:"offset"`
+		Reason    string          `json:"reason"`
 	}
 	entries := make([]dlqEntry, len(batch))
 	for i := range batch {

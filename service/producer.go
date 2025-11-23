@@ -11,14 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 )
 
 // Producer sends log batches to a downstream queue.
 type Producer interface {
-	Enqueue(ctx context.Context, batch []domain.LogRecord) error
+	Enqueue(ctx context.Context, batch []model.LogRecord) error
 }
 
 // ProducerConfig tunes buffering and retry behavior before writing to the queue.
@@ -51,10 +51,10 @@ var (
 
 // ProducerService implements buffered, retried publishing to a LogQueue.
 type ProducerService struct {
-	queue  domain.LogQueue
+	queue  model.LogQueue
 	logger loggerpkg.Logger
 
-	workCh    chan []domain.LogRecord
+	workCh    chan []model.LogRecord
 	wg        sync.WaitGroup
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -74,7 +74,7 @@ type ProducerService struct {
 }
 
 // NewProducerService wires producer workers around the provided queue.
-func NewProducerService(queue domain.LogQueue, logr loggerpkg.Logger, cfg *ProducerConfig) *ProducerService {
+func NewProducerService(queue model.LogQueue, logr loggerpkg.Logger, cfg *ProducerConfig) *ProducerService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
@@ -114,7 +114,7 @@ func NewProducerService(queue domain.LogQueue, logr loggerpkg.Logger, cfg *Produ
 	svc := &ProducerService{
 		queue:                 queue,
 		logger:                logr,
-		workCh:                make(chan []domain.LogRecord, bufferSize),
+		workCh:                make(chan []model.LogRecord, bufferSize),
 		ctx:                   ctx,
 		cancel:                cancel,
 		queueBufferSize:       bufferSize,
@@ -141,7 +141,7 @@ func (p *ProducerService) Start() {
 }
 
 // Enqueue buffers a batch for asynchronous publishing.
-func (p *ProducerService) Enqueue(ctx context.Context, batch []domain.LogRecord) error {
+func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -197,7 +197,7 @@ func (p *ProducerService) runProducer(workerID int) {
 	}
 }
 
-func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []domain.LogRecord, workerID int) bool {
+func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model.LogRecord, workerID int) bool {
 	maxAttempts := p.maxRetries + 1
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -228,7 +228,7 @@ func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []domai
 	return false
 }
 
-func (p *ProducerService) writeProducerDLQ(batch []domain.LogRecord, reason error) {
+func (p *ProducerService) writeProducerDLQ(batch []model.LogRecord, reason error) {
 	if p.dlqDir == "" || len(batch) == 0 {
 		return
 	}
@@ -239,9 +239,9 @@ func (p *ProducerService) writeProducerDLQ(batch []domain.LogRecord, reason erro
 		return
 	}
 	entry := struct {
-		Records []domain.LogRecord `json:"records"`
-		Reason  string             `json:"reason"`
-		Time    time.Time          `json:"time"`
+		Records []model.LogRecord `json:"records"`
+		Reason  string            `json:"reason"`
+		Time    time.Time         `json:"time"`
 	}{
 		Records: batch,
 		Reason:  reason.Error(),

@@ -95,10 +95,9 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		PersistTimeout: a.cfg.Consumer.PersistTimeout,
 	}
 
-	store := repo.NewFileRepo(a.cfg.LogsDir, a.logger)
+	storeRepo := repo.NewFileRepo(a.cfg.LogsDir, a.logger)
 	var (
 		mode        service.PipelineMode = service.ModeDirect
-		consumerSvc *service.ConsumerService
 		producerSvc *service.ProducerService
 	)
 
@@ -112,7 +111,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		if batchTimeout <= 0 {
 			batchTimeout = time.Second
 		}
-		kafkaQueue, err := queue.NewKafkaLogQueue(queue.KafkaConfig{
+		logQueue, err := queue.NewKafkaLogQueue(config.KafkaSettings{
 			Brokers:        a.cfg.KafkaSettings.Brokers,
 			Topic:          a.cfg.KafkaSettings.Topic,
 			GroupID:        a.cfg.KafkaSettings.GroupID,
@@ -128,7 +127,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			return nil, runCleanups, fmt.Errorf("configure kafka: %w", err)
 		}
 
-		consumerSvc = service.NewConsumerService(kafkaQueue, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
+		consumerSvc := service.NewConsumerService(logQueue, storeRepo, consumerBatchCfg, a.logger, logQueue.Close)
 		if err := consumerSvc.Start(ctx); err != nil {
 			return nil, runCleanups, fmt.Errorf("start kafka consumers: %w", err)
 		}
@@ -140,14 +139,15 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			WriteTimeout:          a.cfg.Ingestion.ProducerWriteTimeout,
 			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
 		}
-		producerSvc = service.NewProducerService(kafkaQueue, a.logger, producerCfg)
+		producerSvc = service.NewProducerService(logQueue, a.logger, producerCfg)
 		producerSvc.Start()
 		cleanups = append(cleanups, func() { producerSvc.Close() })
 	}
 
 	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
 	aggSvc.Start(ctx)
-	ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
+
+	ingestionSvc := service.NewIngestionService(storeRepo, producerSvc, mode, a.logger)
 	cleanups = append(cleanups, func() { ingestionSvc.Close() })
 
 	mux := http.NewServeMux()

@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/util"
+	"github.com/lechuhuuha/log_forge/model"
 )
 
-// benchmarkStore is a lightweight LogStore used for benchmarks.
+// benchmarkStore is a lightweight Repository used for benchmarks.
 type benchmarkStore struct{}
 
-func (benchmarkStore) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (benchmarkStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	return nil
 }
 
@@ -26,14 +26,14 @@ type benchmarkQueue struct {
 	err   error
 }
 
-func (q *benchmarkQueue) EnqueueBatch(ctx context.Context, records []domain.LogRecord) error {
+func (q *benchmarkQueue) EnqueueBatch(ctx context.Context, records []model.LogRecord) error {
 	q.mu.Lock()
 	q.count += len(records)
 	q.mu.Unlock()
 	return q.err
 }
 
-func (q *benchmarkQueue) StartConsumers(ctx context.Context, handler func(context.Context, domain.ConsumedMessage)) error {
+func (q *benchmarkQueue) StartConsumers(ctx context.Context, handler func(context.Context, model.ConsumedMessage)) error {
 	return nil
 }
 
@@ -63,7 +63,7 @@ func BenchmarkAggregationAggregateAll(b *testing.B) {
 func BenchmarkIngestionProcessBatchDirect(b *testing.B) {
 	store := benchmarkStore{}
 	svc := NewIngestionService(store, nil, ModeDirect, nil)
-	records := []domain.LogRecord{{
+	records := []model.LogRecord{{
 		Timestamp: time.Now().UTC(),
 		Path:      "/bench",
 		UserAgent: "ua",
@@ -89,7 +89,7 @@ func BenchmarkIngestionProcessBatchQueue(b *testing.B) {
 	b.Cleanup(producer.Close)
 	svc := NewIngestionService(nil, producer, ModeQueue, nil)
 
-	records := []domain.LogRecord{{
+	records := []model.LogRecord{{
 		Timestamp: time.Now().UTC(),
 		Path:      "/bench",
 		UserAgent: "ua",
@@ -131,7 +131,7 @@ func writeHourFile(logsDir string, ts time.Time, lines int) error {
 	}
 	defer f.Close()
 
-	rec := domain.LogRecord{
+	rec := model.LogRecord{
 		Timestamp: ts,
 		Path:      "/path",
 		UserAgent: "agent",

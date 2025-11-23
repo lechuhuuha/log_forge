@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 )
 
 type mockStore struct {
-	batches [][]domain.LogRecord
+	batches [][]model.LogRecord
 	err     error
 }
 
-func (m *mockStore) SaveBatch(ctx context.Context, records []domain.LogRecord) error {
+func (m *mockStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	if m.err == nil {
-		cp := make([]domain.LogRecord, len(records))
+		cp := make([]model.LogRecord, len(records))
 		copy(cp, records)
 		m.batches = append(m.batches, cp)
 	}
@@ -26,14 +26,14 @@ func (m *mockStore) SaveBatch(ctx context.Context, records []domain.LogRecord) e
 
 type mockProducer struct {
 	mu      sync.Mutex
-	batches [][]domain.LogRecord
+	batches [][]model.LogRecord
 	err     error
 }
 
-func (m *mockProducer) Enqueue(ctx context.Context, records []domain.LogRecord) error {
+func (m *mockProducer) Enqueue(ctx context.Context, records []model.LogRecord) error {
 	if m.err == nil {
 		m.mu.Lock()
-		cp := make([]domain.LogRecord, len(records))
+		cp := make([]model.LogRecord, len(records))
 		copy(cp, records)
 		m.batches = append(m.batches, cp)
 		m.mu.Unlock()
@@ -43,7 +43,7 @@ func (m *mockProducer) Enqueue(ctx context.Context, records []domain.LogRecord) 
 
 func TestIngestionService_ProcessBatch(t *testing.T) {
 	now := time.Now()
-	records := []domain.LogRecord{{
+	records := []model.LogRecord{{
 		Timestamp: now,
 		Path:      "/home",
 		UserAgent: "ua",

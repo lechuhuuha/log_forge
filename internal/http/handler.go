@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/service"
 )
 
@@ -58,7 +58,7 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (h *Handler) decodeRecords(r *http.Request) ([]domain.LogRecord, error) {
+func (h *Handler) decodeRecords(r *http.Request) ([]model.LogRecord, error) {
 	contentType := r.Header.Get("Content-Type")
 	switch {
 	case strings.Contains(contentType, "application/json"):
@@ -70,16 +70,16 @@ func (h *Handler) decodeRecords(r *http.Request) ([]domain.LogRecord, error) {
 	}
 }
 
-func (h *Handler) decodeJSON(body io.Reader) ([]domain.LogRecord, error) {
+func (h *Handler) decodeJSON(body io.Reader) ([]model.LogRecord, error) {
 	decoder := json.NewDecoder(body)
-	var records []domain.LogRecord
+	var records []model.LogRecord
 	if err := decoder.Decode(&records); err != nil {
 		return nil, fmt.Errorf("invalid JSON payload: %w", err)
 	}
 	return h.validate(records)
 }
 
-func (h *Handler) decodeCSV(body io.Reader) ([]domain.LogRecord, error) {
+func (h *Handler) decodeCSV(body io.Reader) ([]model.LogRecord, error) {
 	reader := csv.NewReader(body)
 	reader.TrimLeadingSpace = true
 	rows, err := reader.ReadAll()
@@ -96,7 +96,7 @@ func (h *Handler) decodeCSV(body io.Reader) ([]domain.LogRecord, error) {
 		startIdx = 1
 	}
 
-	var records []domain.LogRecord
+	var records []model.LogRecord
 	for i := startIdx; i < len(rows); i++ {
 		row := rows[i]
 		if len(row) < 3 {
@@ -106,7 +106,7 @@ func (h *Handler) decodeCSV(body io.Reader) ([]domain.LogRecord, error) {
 		if err != nil {
 			return nil, fmt.Errorf("row %d has invalid timestamp: %w", i+1, err)
 		}
-		rec := domain.LogRecord{
+		rec := model.LogRecord{
 			Timestamp: ts,
 			Path:      strings.TrimSpace(row[1]),
 			UserAgent: strings.TrimSpace(row[2]),
@@ -116,7 +116,7 @@ func (h *Handler) decodeCSV(body io.Reader) ([]domain.LogRecord, error) {
 	return h.validate(records)
 }
 
-func (h *Handler) validate(records []domain.LogRecord) ([]domain.LogRecord, error) {
+func (h *Handler) validate(records []model.LogRecord) ([]model.LogRecord, error) {
 	if len(records) == 0 {
 		return nil, errors.New("no log records provided")
 	}
