@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
-	"github.com/lechuhuuha/log_forge/internal/service"
+	"github.com/lechuhuuha/log_forge/service"
 )
 
 type mockStore struct {

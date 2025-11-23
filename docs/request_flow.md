@@ -3,13 +3,13 @@ flowchart TD
     Client((Client / Load))
     HTTP[net/http server\ncmd/bootstrap/app.go]
     LogsHandler[/POST /logs\ninternal/http/handler.go/]
-    Ingestion[IngestionService\ninternal/service/ingestion.go]
+    Ingestion[IngestionService\nservice/ingestion.go]
     Store[FileLogStore\ninternal/storage/file_store.go]
     KafkaWriter[kafka-go Writer\ninternal/queue/kafka_queue.go]
     Kafka[(Kafka topic logs)]
     Consumers{{Consumer goroutines}}
     NDJSON[(logs/YYYY-MM-DD/HH.log.json)]
-    Aggregator[AggregationService\ninternal/service/aggregation.go]
+    Aggregator[AggregationService\nservice/aggregation.go]
     Analytics[(analytics/summary_HH.json)]
     PromScraper((Prometheus))
     Metrics[/metrics endpoint/]

@@ -12,8 +12,8 @@ import (
 
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	"github.com/lechuhuuha/log_forge/internal/metrics"
-	"github.com/lechuhuuha/log_forge/internal/service"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/service"
 )
 
 // Handler wires HTTP endpoints to services.

@@ -14,9 +14,9 @@ import (
 	httpapi "github.com/lechuhuuha/log_forge/internal/http"
 	"github.com/lechuhuuha/log_forge/internal/profileutil"
 	"github.com/lechuhuuha/log_forge/internal/queue"
-	"github.com/lechuhuuha/log_forge/internal/service"
 	"github.com/lechuhuuha/log_forge/internal/storage"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
+	"github.com/lechuhuuha/log_forge/service"
 	"github.com/lechuhuuha/log_forge/util"
 )
 
@@ -67,11 +67,11 @@ func BuildApp(cliCfg CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		appCfg.Consumer = fileCfg.Consumer
 	}
 
-	return NewApp(appCfg, logger)
+	return newApp(appCfg, logger)
 }
 
-// NewApp returns a configured App instance.
-func NewApp(cfg AppConfig, logger loggerpkg.Logger) (*App, error) {
+// newApp returns a configured App instance.
+func newApp(cfg AppConfig, logger loggerpkg.Logger) (*App, error) {
 	if logger == nil {
 		logger = loggerpkg.NewNop()
 	}
@@ -119,7 +119,7 @@ func (a *App) Run(ctx context.Context) error {
 			ProducerWriteTimeout:  producerWriteTimeout,
 			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
 		}
-		consumerBatchCfg := ConsumerBatchConfig{
+		consumerBatchCfg := service.ConsumerBatchConfig{
 			FlushSize:      a.cfg.Consumer.FlushSize,
 			FlushInterval:  consumerFlushInterval,
 			PersistTimeout: consumerPersistTimeout,
@@ -129,10 +129,8 @@ func (a *App) Run(ctx context.Context) error {
 		var (
 			queueImpl domain.LogQueue
 			mode      service.PipelineMode = service.ModeDirect
-			closer    func() error
+			pipeline  *service.PipelineService
 		)
-
-		var batchWriter *consumerBatchWriter
 
 		if a.cfg.Version == 2 {
 			mode = service.ModeQueue
@@ -167,26 +165,13 @@ func (a *App) Run(ctx context.Context) error {
 				}
 			}
 			queueImpl = kafkaQueue
-			closer = kafkaQueue.Close
-
-			consumeCtx, consumeCancel := context.WithCancel(ctx)
-			batchWriter = newConsumerBatchWriter(consumeCtx, store, consumerBatchCfg, a.logger)
-			defer func() {
-				consumeCancel()
-				batchWriter.Close()
-			}()
-
-			if err := kafkaQueue.StartConsumers(consumeCtx, func(c context.Context, msg domain.ConsumedMessage) {
-				batchWriter.Add(msg)
-			}); err != nil {
+			pipeline = service.NewPipelineService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
+			if err := pipeline.Start(ctx); err != nil {
 				return fmt.Errorf("start kafka consumers: %w", err)
 			}
+			defer pipeline.Close()
 		} else {
 			queueImpl = queue.NoopQueue{}
-		}
-
-		if closer != nil {
-			defer closer()
 		}
 
 		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, a.logger, ingestionCfg)

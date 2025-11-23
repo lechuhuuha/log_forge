@@ -136,10 +136,10 @@ test:
 	go test ./... -count=1 -cover -json | tparse -all
 
 bench:
-	go test -run=^$$ -bench=. -benchmem ./internal/service ./cmd/bootstrap
+	go test -run=^$$ -bench=. -benchmem ./service ./cmd/bootstrap
 
 race:
-	go test -race ./internal/service ./internal/http ./cmd/bootstrap ./internal/queue
+	go test -race ./service ./internal/http ./cmd/bootstrap ./internal/queue
 
 loadtest: loadtest-v1
 
