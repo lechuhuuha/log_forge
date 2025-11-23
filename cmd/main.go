@@ -8,11 +8,12 @@ import (
 	"syscall"
 
 	"github.com/lechuhuuha/log_forge/cmd/bootstrap"
+	"github.com/lechuhuuha/log_forge/config"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
 func main() {
-	cfg := bootstrap.ParseFlags()
+	cfg := config.ParseFlags()
 
 	logg, cleanup, err := bootstrap.InitLogger()
 	if err != nil {

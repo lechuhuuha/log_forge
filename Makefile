@@ -25,19 +25,19 @@ run-v1: build
 	./$(BINARY) -version=1
 
 run-v2: build
-	./$(BINARY) -config=configs/config.v2.local.yaml
+	./$(BINARY) -config=config/examples/config.v2.local.yaml
 
 capture-profile-v1: build
-	PROFILE_CAPTURE=1 PROFILE_NAME=v1 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=configs/config.v1.local.yaml
+	PROFILE_CAPTURE=1 PROFILE_NAME=v1 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=config/examples/config.v1.local.yaml
 
 capture-profile-v2: build
-	PROFILE_CAPTURE=1 PROFILE_NAME=v2 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=configs/config.v2.local.yaml
+	PROFILE_CAPTURE=1 PROFILE_NAME=v2 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=config/examples/config.v2.local.yaml
 
 profile-run-v1: build
-	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -version=1 -config=configs/config.v1.local.yaml
+	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -version=1 -config=config/examples/config.v1.local.yaml
 
 profile-run-v2: build
-	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V2) ./$(BINARY) -config=configs/config.v2.local.yaml
+	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V2) ./$(BINARY) -config=config/examples/config.v2.local.yaml
 
 profile-cpu-v1:
 	@mkdir -p $(PROFILES_DIR)

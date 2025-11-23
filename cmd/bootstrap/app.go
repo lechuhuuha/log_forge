@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/lechuhuuha/log_forge/internal/config"
+	"github.com/lechuhuuha/log_forge/config"
 	"github.com/lechuhuuha/log_forge/internal/domain"
 	httpapi "github.com/lechuhuuha/log_forge/internal/http"
 	"github.com/lechuhuuha/log_forge/internal/profileutil"
@@ -39,32 +40,30 @@ type App struct {
 }
 
 // BuildApp loads any file-based configuration overrides and returns a ready-to-run App.
-func BuildApp(cliCfg CLIConfig, logger loggerpkg.Logger) (*App, error) {
-	appCfg := AppConfig{
-		Addr:                cliCfg.Addr,
-		Version:             cliCfg.Version,
-		LogsDir:             cliCfg.LogsDir,
-		AnalyticsDir:        cliCfg.AnalyticsDir,
-		AggregationInterval: cliCfg.AggregationInterval,
+func BuildApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
+	if strings.TrimSpace(cliCfg.ConfigPath) == "" {
+		return nil, errors.New("config file path is required")
 	}
 
-	if cliCfg.ConfigPath != "" {
-		fileCfg, err := config.Load(cliCfg.ConfigPath)
-		if err != nil {
-			return nil, fmt.Errorf("load config file: %w", err)
-		}
-		appCfg.Version = fileCfg.Version
-		appCfg.Addr = fileCfg.Server.Addr
-		appCfg.LogsDir = fileCfg.Storage.LogsDir
-		appCfg.AnalyticsDir = fileCfg.Storage.AnalyticsDir
-		aggInterval, err := fileCfg.AggregationInterval(cliCfg.AggregationInterval)
-		if err != nil {
-			return nil, fmt.Errorf("invalid aggregation interval: %w", err)
-		}
-		appCfg.AggregationInterval = aggInterval
-		appCfg.KafkaSettings = &fileCfg.Kafka
-		appCfg.Ingestion = fileCfg.Ingestion
-		appCfg.Consumer = fileCfg.Consumer
+	fileCfg, err := config.Load(cliCfg.ConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("load config file: %w", err)
+	}
+
+	aggInterval, err := fileCfg.AggregationInterval(0)
+	if err != nil {
+		return nil, fmt.Errorf("invalid aggregation interval: %w", err)
+	}
+
+	appCfg := AppConfig{
+		Addr:                fileCfg.Server.Addr,
+		Version:             fileCfg.Version,
+		LogsDir:             fileCfg.Storage.LogsDir,
+		AnalyticsDir:        fileCfg.Storage.AnalyticsDir,
+		AggregationInterval: aggInterval,
+		KafkaSettings:       &fileCfg.Kafka,
+		Ingestion:           fileCfg.Ingestion,
+		Consumer:            fileCfg.Consumer,
 	}
 
 	return newApp(appCfg, logger)
@@ -77,18 +76,6 @@ func newApp(cfg AppConfig, logger loggerpkg.Logger) (*App, error) {
 	}
 	if cfg.AggregationInterval <= 0 {
 		return nil, errors.New("aggregation interval must be positive")
-	}
-	if cfg.Version == 0 {
-		cfg.Version = util.DefaultPipelineVersion
-	}
-	if cfg.Addr == "" {
-		cfg.Addr = util.DefaultHTTPAddr
-	}
-	if cfg.LogsDir == "" {
-		cfg.LogsDir = util.DefaultLogsDir
-	}
-	if cfg.AnalyticsDir == "" {
-		cfg.AnalyticsDir = util.DefaultAnalyticsDir
 	}
 	return &App{cfg: cfg, logger: logger}, nil
 }
@@ -128,36 +115,30 @@ func (a *App) Run(ctx context.Context) error {
 
 		if a.cfg.Version == 2 {
 			mode = service.ModeQueue
-			var (
-				kafkaQueue *queue.KafkaLogQueue
-				err        error
-			)
-			if a.cfg.KafkaSettings != nil && len(a.cfg.KafkaSettings.Brokers) > 0 {
-				batchTimeout := a.cfg.KafkaSettings.BatchTimeout
-				if batchTimeout <= 0 {
-					batchTimeout = time.Second
-				}
-				kafkaQueue, err = queue.NewKafkaLogQueue(queue.KafkaConfig{
-					Brokers:        a.cfg.KafkaSettings.Brokers,
-					Topic:          a.cfg.KafkaSettings.Topic,
-					GroupID:        a.cfg.KafkaSettings.GroupID,
-					BatchSize:      a.cfg.KafkaSettings.BatchSize,
-					BatchTimeout:   batchTimeout,
-					Consumers:      a.cfg.KafkaSettings.Consumers,
-					RequireAllAcks: a.cfg.KafkaSettings.RequireAllAcks,
-					BatchBytes:     a.cfg.KafkaSettings.BatchBytes,
-					Compression:    a.cfg.KafkaSettings.Compression,
-					Async:          a.cfg.KafkaSettings.Async,
-				}, a.logger)
-				if err != nil {
-					return fmt.Errorf("configure kafka: %w", err)
-				}
-			} else {
-				kafkaQueue, err = util.CreateKafkaQueueFromEnv(a.logger)
-				if err != nil {
-					return fmt.Errorf("configure kafka: %w", err)
-				}
+			if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) > 0 {
+				return fmt.Errorf("kafka settings are required for version 2")
 			}
+
+			batchTimeout := a.cfg.KafkaSettings.BatchTimeout
+			if batchTimeout <= 0 {
+				batchTimeout = time.Second
+			}
+			kafkaQueue, err := queue.NewKafkaLogQueue(queue.KafkaConfig{
+				Brokers:        a.cfg.KafkaSettings.Brokers,
+				Topic:          a.cfg.KafkaSettings.Topic,
+				GroupID:        a.cfg.KafkaSettings.GroupID,
+				BatchSize:      a.cfg.KafkaSettings.BatchSize,
+				BatchTimeout:   batchTimeout,
+				Consumers:      a.cfg.KafkaSettings.Consumers,
+				RequireAllAcks: a.cfg.KafkaSettings.RequireAllAcks,
+				BatchBytes:     a.cfg.KafkaSettings.BatchBytes,
+				Compression:    a.cfg.KafkaSettings.Compression,
+				Async:          a.cfg.KafkaSettings.Async,
+			}, a.logger)
+			if err != nil {
+				return fmt.Errorf("configure kafka: %w", err)
+			}
+
 			queueImpl = kafkaQueue
 			pipeline = service.NewPipelineService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
 			if err := pipeline.Start(ctx); err != nil {

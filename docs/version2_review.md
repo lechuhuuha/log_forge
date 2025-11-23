@@ -12,7 +12,7 @@ The current Version 2 (v2) pipeline accepts `/logs` batches, enqueues them onto 
 
 ## Improvements Over the Previous v2 Iteration
 - **Dedicated producer workers** – Earlier v2 produced to Kafka straight from the handler, so each HTTP goroutine paid the Kafka round-trip. The new worker pool (`service/ingestion.go:38-75`) fan-outs batches to long-lived producers, reducing connection churn and balancing load across requests.
-- **Configurable batching semantics** – `configs/config.v2.local.yaml` now sets aggressive Kafka batch sizes (`batchSize: 50000`, `batchTimeout: 200ms`) and 10 consumers, improving throughput compared with the earlier defaults that mirrored v1.
+- **Configurable batching semantics** – `config/examples/config.v2.local.yaml` now sets aggressive Kafka batch sizes (`batchSize: 50000`, `batchTimeout: 200ms`) and 10 consumers, improving throughput compared with the earlier defaults that mirrored v1.
 - **Consumer-side observability** – Logging of partition, offset, and active consumer count in `internal/queue/kafka_queue.go:154-169` replaces the old “best effort” stdout prints, which simplifies diagnosing partition assignments and lag.
 
 ## Findings / Regressions

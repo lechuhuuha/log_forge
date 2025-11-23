@@ -29,7 +29,7 @@ Typical flow
 3) Kafka consumers read from topic partitions -> batch writer buffers -> flushes to files.
 4) Aggregator periodically processes the files into analytics results.
 
-Key YAML knobs (configs/config.v2.local.yaml)
+Key YAML knobs (config/examples/config.v2.local.yaml)
 
 - ingestion: `queueBufferSize`, `producerWorkers`, `producerWriteTimeout`, `producerMaxRetries`, `producerRetryBackoff`, `queueHighWaterPercent`, `producerDLQDir`
 - consumer: `flushSize`, `flushInterval`, `persistTimeout`, `dlqDir`

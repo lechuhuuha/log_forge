@@ -1,6 +1,7 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -8,6 +9,37 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// CLIConfig captures CLI-provided options for starting the server.
+type CLIConfig struct {
+	Addr                string
+	Version             int
+	LogsDir             string
+	AnalyticsDir        string
+	AggregationInterval time.Duration
+	ConfigPath          string
+}
+
+// ParseFlags reads CLI parameters and returns a Config with defaults applied.
+func ParseFlags() CLIConfig {
+	addr := flag.String("addr", "", "HTTP listen address (optional override)")
+	versionFlag := flag.Int("version", 0, "Pipeline version (optional override)")
+	logsDir := flag.String("logs-dir", "", "Directory for raw logs (optional override)")
+	analyticsDir := flag.String("analytics-dir", "", "Directory for analytics output (optional override)")
+	aggInterval := flag.Duration("aggregation-interval", 0, "Aggregation interval (optional override)")
+	configPath := flag.String("config", "", "Path to YAML config file (required)")
+
+	flag.Parse()
+
+	return CLIConfig{
+		Addr:                *addr,
+		Version:             *versionFlag,
+		LogsDir:             *logsDir,
+		AnalyticsDir:        *analyticsDir,
+		AggregationInterval: *aggInterval,
+		ConfigPath:          strings.TrimSpace(*configPath),
+	}
+}
 
 // Config models the YAML configuration file.
 type Config struct {

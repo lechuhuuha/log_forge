@@ -48,7 +48,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
   - `internal/metrics`: counters, Go/process collectors with idempotent registration.
 - **Configuration**
   - Flags/env for quick overrides (e.g., `-version`, `HTTP_ADDR`, `KAFKA_BROKERS`).
-  - YAML config (`-config=...`) to set server, directories, aggregation interval, Kafka settings. Samples in `configs/` for Docker and local runs.
+- YAML config (`-config=...`) to set server, directories, aggregation interval, Kafka settings. Samples in `config/examples/` for Docker and local runs.
 - **Aggregation**
   - Only processes the **current UTC hour** to avoid re-reading all history.
   - Writes summaries with RFC3339 hour identifier and nested maps for counts.
@@ -81,7 +81,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 |--------|-------------|
 | `make build` | build `bin/server` |
 | `make run-v1` | run Version 1 locally (`-version=1`) |
-| `make run-v2` | run Version 2 locally (needs Kafka; uses `configs/config.v2.local.yaml`) |
+| `make run-v2` | run Version 2 locally (needs Kafka; uses `config/examples/config.v2.local.yaml`) |
 | `make stack-up` | build & run Kafka + Prometheus + app v1/v2 containers; ensure `logs` topic |
 | `make stack-down` | tear down stack |
 | `make infra-up` | run Kafka + Prometheus only (app runs outside Docker) |
@@ -102,7 +102,7 @@ Hourly files: `logs/YYYY-MM-DD/HH.log.json`, analytics: `analytics/summary_HH.js
 ### Running Version 2 locally (app outside Docker)
 ```bash
 make infra-up            # starts Kafka (localhost:19092) + Prometheus
-make run-v2              # uses configs/config.v2.local.yaml
+make run-v2              # uses config/examples/config.v2.local.yaml
 curl -X POST -H "Content-Type: application/json" \
      -d @testdata/sample_logs.json \
      http://localhost:8083/logs
