@@ -11,7 +11,7 @@ Use these guardrails whenever you add or modify code so the project keeps its cu
   - `internal/metrics`: counters/gauges; register idempotently.
 
 - **Dependency injection**
-  - Constructors accept interfaces and configs, return concrete structs (e.g., `NewIngestionService(store LogStore, queue LogQueue, ...)`).
+- Constructors accept interfaces and configs, return concrete structs (e.g., `NewIngestionService(store LogStore, producer Producer, ...)`).
   - Prefer interface fields on structs; inject implementations from `cmd/bootstrap`.
   - Always accept a `logger.Logger`; default to `logger.NewNop()` if `nil`.
   - Config structs collect tuning knobs; apply defaults in constructors when values are zero.

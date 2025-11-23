@@ -100,25 +100,19 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	run := func() error {
-		producerWriteTimeout, err := a.cfg.Ingestion.ProducerTimeout(10 * time.Second)
-		if err != nil {
-			return fmt.Errorf("invalid producer write timeout: %w", err)
+		producerWriteTimeout := a.cfg.Ingestion.ProducerWriteTimeout
+		if producerWriteTimeout <= 0 {
+			producerWriteTimeout = 10 * time.Second
 		}
-		consumerFlushInterval, err := a.cfg.Consumer.ConsumerFlushInterval(500 * time.Millisecond)
-		if err != nil {
-			return fmt.Errorf("invalid consumer flush interval: %w", err)
+		consumerFlushInterval := a.cfg.Consumer.FlushInterval
+		if consumerFlushInterval <= 0 {
+			consumerFlushInterval = 500 * time.Millisecond
 		}
-		consumerPersistTimeout, err := a.cfg.Consumer.ConsumerPersistTimeout(5 * time.Second)
-		if err != nil {
-			return fmt.Errorf("invalid consumer persist timeout: %w", err)
+		consumerPersistTimeout := a.cfg.Consumer.PersistTimeout
+		if consumerPersistTimeout <= 0 {
+			consumerPersistTimeout = 5 * time.Second
 		}
 
-		ingestionCfg := &service.IngestionConfig{
-			QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
-			ProducerWorkers:       a.cfg.Ingestion.ProducerWorkers,
-			ProducerWriteTimeout:  producerWriteTimeout,
-			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
-		}
 		consumerBatchCfg := service.ConsumerBatchConfig{
 			FlushSize:      a.cfg.Consumer.FlushSize,
 			FlushInterval:  consumerFlushInterval,
@@ -139,9 +133,9 @@ func (a *App) Run(ctx context.Context) error {
 				err        error
 			)
 			if a.cfg.KafkaSettings != nil && len(a.cfg.KafkaSettings.Brokers) > 0 {
-				batchTimeout, err := a.cfg.KafkaSettings.KafkaBatchTimeout(time.Second)
-				if err != nil {
-					return fmt.Errorf("invalid kafka batch timeout: %w", err)
+				batchTimeout := a.cfg.KafkaSettings.BatchTimeout
+				if batchTimeout <= 0 {
+					batchTimeout = time.Second
 				}
 				kafkaQueue, err = queue.NewKafkaLogQueue(queue.KafkaConfig{
 					Brokers:        a.cfg.KafkaSettings.Brokers,
@@ -174,7 +168,20 @@ func (a *App) Run(ctx context.Context) error {
 			queueImpl = queue.NoopQueue{}
 		}
 
-		ingestionSvc := service.NewIngestionService(store, queueImpl, mode, a.logger, ingestionCfg)
+		var producerSvc *service.ProducerService
+		if mode == service.ModeQueue {
+			producerCfg := &service.ProducerConfig{
+				QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
+				Workers:               a.cfg.Ingestion.ProducerWorkers,
+				WriteTimeout:          producerWriteTimeout,
+				QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
+			}
+			producerSvc = service.NewProducerService(queueImpl, a.logger, producerCfg)
+			producerSvc.Start()
+			defer producerSvc.Close()
+		}
+
+		ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
 		defer ingestionSvc.Close()
 
 		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)

@@ -38,31 +38,31 @@ type AggregationConfig struct {
 
 // IngestionSettings tunes producer-side buffering before Kafka.
 type IngestionSettings struct {
-	QueueBufferSize       int     `yaml:"queueBufferSize"`
-	ProducerWorkers       int     `yaml:"producerWorkers"`
-	ProducerWriteTimeout  string  `yaml:"producerWriteTimeout"`
-	QueueHighWaterPercent float64 `yaml:"queueHighWaterPercent"`
+	QueueBufferSize       int           `yaml:"queueBufferSize"`
+	ProducerWorkers       int           `yaml:"producerWorkers"`
+	ProducerWriteTimeout  time.Duration `yaml:"producerWriteTimeout"`
+	QueueHighWaterPercent float64       `yaml:"queueHighWaterPercent"`
 }
 
 // ConsumerSettings configures consumer-side batching to disk.
 type ConsumerSettings struct {
-	FlushSize      int    `yaml:"flushSize"`
-	FlushInterval  string `yaml:"flushInterval"`
-	PersistTimeout string `yaml:"persistTimeout"`
+	FlushSize      int           `yaml:"flushSize"`
+	FlushInterval  time.Duration `yaml:"flushInterval"`
+	PersistTimeout time.Duration `yaml:"persistTimeout"`
 }
 
 // KafkaSettings captures Kafka queue configuration.
 type KafkaSettings struct {
-	Brokers        []string `yaml:"brokers"`
-	Topic          string   `yaml:"topic"`
-	GroupID        string   `yaml:"groupID"`
-	BatchSize      int      `yaml:"batchSize"`
-	BatchTimeout   string   `yaml:"batchTimeout"`
-	Consumers      int      `yaml:"consumers"`
-	RequireAllAcks bool     `yaml:"requireAllAcks"`
-	BatchBytes     int      `yaml:"batchBytes"`
-	Compression    string   `yaml:"compression"`
-	Async          bool     `yaml:"async"`
+	Brokers        []string      `yaml:"brokers"`
+	Topic          string        `yaml:"topic"`
+	GroupID        string        `yaml:"groupID"`
+	BatchSize      int           `yaml:"batchSize"`
+	BatchTimeout   time.Duration `yaml:"batchTimeout"`
+	Consumers      int           `yaml:"consumers"`
+	RequireAllAcks bool          `yaml:"requireAllAcks"`
+	BatchBytes     int           `yaml:"batchBytes"`
+	Compression    string        `yaml:"compression"`
+	Async          bool          `yaml:"async"`
 }
 
 // Load parses a YAML configuration file from disk.
@@ -107,8 +107,8 @@ func (i *IngestionSettings) applyDefaults() {
 	if i.ProducerWorkers == 0 {
 		i.ProducerWorkers = 10
 	}
-	if strings.TrimSpace(i.ProducerWriteTimeout) == "" {
-		i.ProducerWriteTimeout = "10s"
+	if i.ProducerWriteTimeout == 0 {
+		i.ProducerWriteTimeout = 10 * time.Second
 	}
 	if i.QueueHighWaterPercent == 0 {
 		i.QueueHighWaterPercent = 0.9
@@ -119,11 +119,11 @@ func (c *ConsumerSettings) applyDefaults() {
 	if c.FlushSize == 0 {
 		c.FlushSize = 512
 	}
-	if strings.TrimSpace(c.FlushInterval) == "" {
-		c.FlushInterval = "500ms"
+	if c.FlushInterval == 0 {
+		c.FlushInterval = 500 * time.Millisecond
 	}
-	if strings.TrimSpace(c.PersistTimeout) == "" {
-		c.PersistTimeout = "5s"
+	if c.PersistTimeout == 0 {
+		c.PersistTimeout = 5 * time.Second
 	}
 }
 
@@ -137,8 +137,8 @@ func (k *KafkaSettings) applyDefaults() {
 	if k.BatchSize == 0 {
 		k.BatchSize = 100
 	}
-	if strings.TrimSpace(k.BatchTimeout) == "" {
-		k.BatchTimeout = "1s"
+	if k.BatchTimeout == 0 {
+		k.BatchTimeout = time.Second
 	}
 	if k.Consumers == 0 {
 		k.Consumers = 1
@@ -151,26 +151,6 @@ func (k *KafkaSettings) applyDefaults() {
 // AggregationInterval returns the configured interval or fallback.
 func (c *Config) AggregationInterval(fallback time.Duration) (time.Duration, error) {
 	return parseDurationOrFallback(c.Aggregation.Interval, fallback)
-}
-
-// ProducerTimeout returns the configured producer write timeout.
-func (i IngestionSettings) ProducerTimeout(fallback time.Duration) (time.Duration, error) {
-	return parseDurationOrFallback(i.ProducerWriteTimeout, fallback)
-}
-
-// ConsumerFlushInterval returns the flush interval for consumer batching.
-func (c ConsumerSettings) ConsumerFlushInterval(fallback time.Duration) (time.Duration, error) {
-	return parseDurationOrFallback(c.FlushInterval, fallback)
-}
-
-// ConsumerPersistTimeout returns the persist timeout for consumer batch writes.
-func (c ConsumerSettings) ConsumerPersistTimeout(fallback time.Duration) (time.Duration, error) {
-	return parseDurationOrFallback(c.PersistTimeout, fallback)
-}
-
-// KafkaBatchTimeout returns the Kafka batch timeout duration.
-func (k KafkaSettings) KafkaBatchTimeout(fallback time.Duration) (time.Duration, error) {
-	return parseDurationOrFallback(k.BatchTimeout, fallback)
 }
 
 func parseDurationOrFallback(value string, fallback time.Duration) (time.Duration, error) {

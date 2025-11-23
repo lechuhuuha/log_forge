@@ -62,7 +62,7 @@ func BenchmarkAggregationAggregateAll(b *testing.B) {
 
 func BenchmarkIngestionProcessBatchDirect(b *testing.B) {
 	store := benchmarkStore{}
-	svc := NewIngestionService(store, nil, ModeDirect, nil, nil)
+	svc := NewIngestionService(store, nil, ModeDirect, nil)
 	records := []domain.LogRecord{{
 		Timestamp: time.Now().UTC(),
 		Path:      "/bench",
@@ -79,13 +79,15 @@ func BenchmarkIngestionProcessBatchDirect(b *testing.B) {
 
 func BenchmarkIngestionProcessBatchQueue(b *testing.B) {
 	queue := &benchmarkQueue{}
-	cfg := &IngestionConfig{
-		QueueBufferSize:      1024,
-		ProducerWorkers:      4,
-		ProducerWriteTimeout: time.Second,
+	prodCfg := &ProducerConfig{
+		QueueBufferSize: 1024,
+		Workers:         4,
+		WriteTimeout:    time.Second,
 	}
-	svc := NewIngestionService(nil, queue, ModeQueue, nil, cfg)
-	b.Cleanup(svc.Close)
+	producer := NewProducerService(queue, nil, prodCfg)
+	producer.Start()
+	b.Cleanup(producer.Close)
+	svc := NewIngestionService(nil, producer, ModeQueue, nil)
 
 	records := []domain.LogRecord{{
 		Timestamp: time.Now().UTC(),

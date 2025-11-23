@@ -33,7 +33,7 @@ func (m *mockStore) SaveBatch(ctx context.Context, records []domain.LogRecord) e
 }
 
 func newHandlerWithStore(store domain.LogStore) *Handler {
-	ingestion := service.NewIngestionService(store, nil, service.ModeDirect, nil, nil)
+	ingestion := service.NewIngestionService(store, nil, service.ModeDirect, nil)
 	return NewHandler(ingestion, nil)
 }
 
