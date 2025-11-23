@@ -24,7 +24,7 @@ func main() {
 
 	bootstrap.InitObservability(logg)
 
-	application, err := bootstrap.BuildApp(cfg, logg)
+	application, err := bootstrap.NewApp(cfg, logg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build app: %v\n", err)
 		os.Exit(1)

@@ -39,8 +39,8 @@ type App struct {
 	logger loggerpkg.Logger
 }
 
-// BuildApp loads any file-based configuration overrides and returns a ready-to-run App.
-func BuildApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
+// NewApp loads any file-based configuration overrides and returns a ready-to-run App.
+func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 	if strings.TrimSpace(cliCfg.ConfigPath) == "" {
 		return nil, errors.New("config file path is required")
 	}
@@ -55,6 +55,14 @@ func BuildApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		return nil, fmt.Errorf("invalid aggregation interval: %w", err)
 	}
 
+	if aggInterval <= 0 {
+		return nil, errors.New("aggregation interval must be positive")
+	}
+
+	if logger == nil {
+		logger = loggerpkg.NewNop()
+	}
+
 	appCfg := AppConfig{
 		Addr:                fileCfg.Server.Addr,
 		Version:             fileCfg.Version,
@@ -66,18 +74,108 @@ func BuildApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		Consumer:            fileCfg.Consumer,
 	}
 
-	return newApp(appCfg, logger)
+	return &App{cfg: appCfg, logger: logger}, nil
 }
 
-// newApp returns a configured App instance.
-func newApp(cfg AppConfig, logger loggerpkg.Logger) (*App, error) {
-	if logger == nil {
-		logger = loggerpkg.NewNop()
+// BuildApp assembles services and the HTTP server, returning the server and a cleanup function.
+func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	if cfg.AggregationInterval <= 0 {
-		return nil, errors.New("aggregation interval must be positive")
+
+	cleanup := func() {}
+
+	consumerBatchCfg := service.ConsumerBatchConfig{
+		FlushSize:      a.cfg.Consumer.FlushSize,
+		FlushInterval:  a.cfg.Consumer.FlushInterval,
+		PersistTimeout: a.cfg.Consumer.PersistTimeout,
 	}
-	return &App{cfg: cfg, logger: logger}, nil
+
+	store := storage.NewFileLogStore(a.cfg.LogsDir, a.logger)
+	var (
+		queueImpl   domain.LogQueue
+		mode        service.PipelineMode = service.ModeDirect
+		consumerSvc *service.ConsumerService
+		producerSvc *service.ProducerService
+	)
+
+	if a.cfg.Version == 2 {
+		mode = service.ModeQueue
+		if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) == 0 {
+			return nil, cleanup, fmt.Errorf("kafka settings are required for version 2")
+		}
+
+		batchTimeout := a.cfg.KafkaSettings.BatchTimeout
+		if batchTimeout <= 0 {
+			batchTimeout = time.Second
+		}
+		kafkaQueue, err := queue.NewKafkaLogQueue(queue.KafkaConfig{
+			Brokers:        a.cfg.KafkaSettings.Brokers,
+			Topic:          a.cfg.KafkaSettings.Topic,
+			GroupID:        a.cfg.KafkaSettings.GroupID,
+			BatchSize:      a.cfg.KafkaSettings.BatchSize,
+			BatchTimeout:   batchTimeout,
+			Consumers:      a.cfg.KafkaSettings.Consumers,
+			RequireAllAcks: a.cfg.KafkaSettings.RequireAllAcks,
+			BatchBytes:     a.cfg.KafkaSettings.BatchBytes,
+			Compression:    a.cfg.KafkaSettings.Compression,
+			Async:          a.cfg.KafkaSettings.Async,
+		}, a.logger)
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("configure kafka: %w", err)
+		}
+
+		queueImpl = kafkaQueue
+		consumerSvc = service.NewConsumerService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
+		if err := consumerSvc.Start(ctx); err != nil {
+			return nil, cleanup, fmt.Errorf("start kafka consumers: %w", err)
+		}
+
+		producerCfg := &service.ProducerConfig{
+			QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
+			Workers:               a.cfg.Ingestion.ProducerWorkers,
+			WriteTimeout:          a.cfg.Ingestion.ProducerWriteTimeout,
+			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
+		}
+		producerSvc = service.NewProducerService(queueImpl, a.logger, producerCfg)
+		producerSvc.Start()
+
+		prevCleanup := cleanup
+		cleanup = func() {
+			producerSvc.Close()
+			consumerSvc.Close()
+			prevCleanup()
+		}
+	} else {
+		queueImpl = queue.NoopQueue{}
+	}
+
+	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
+	aggSvc.Start(ctx)
+
+	ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
+
+	mux := http.NewServeMux()
+	handler := httpapi.NewHandler(ingestionSvc, a.logger)
+	handler.RegisterRoutes(mux)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	server := &http.Server{
+		Addr:    a.cfg.Addr,
+		Handler: mux,
+	}
+
+	prevCleanup := cleanup
+	cleanup = func() {
+		ingestionSvc.Close()
+		prevCleanup()
+	}
+
+	return server, cleanup, nil
 }
 
 // Run starts the HTTP server and supporting goroutines until the context is canceled.
@@ -87,98 +185,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	run := func() error {
-		producerWriteTimeout := a.cfg.Ingestion.ProducerWriteTimeout
-		if producerWriteTimeout <= 0 {
-			producerWriteTimeout = 10 * time.Second
+		server, cleanup, err := a.BuildApp(ctx)
+		if err != nil {
+			return err
 		}
-		consumerFlushInterval := a.cfg.Consumer.FlushInterval
-		if consumerFlushInterval <= 0 {
-			consumerFlushInterval = 500 * time.Millisecond
-		}
-		consumerPersistTimeout := a.cfg.Consumer.PersistTimeout
-		if consumerPersistTimeout <= 0 {
-			consumerPersistTimeout = 5 * time.Second
-		}
-
-		consumerBatchCfg := service.ConsumerBatchConfig{
-			FlushSize:      a.cfg.Consumer.FlushSize,
-			FlushInterval:  consumerFlushInterval,
-			PersistTimeout: consumerPersistTimeout,
-		}
-
-		store := storage.NewFileLogStore(a.cfg.LogsDir, a.logger)
-		var (
-			queueImpl   domain.LogQueue
-			mode        service.PipelineMode = service.ModeDirect
-			consumerSvc *service.ConsumerService
-			producerSvc *service.ProducerService
-		)
-
-		if a.cfg.Version == 2 {
-			mode = service.ModeQueue
-			if a.cfg.KafkaSettings == nil || len(a.cfg.KafkaSettings.Brokers) == 0 {
-				return fmt.Errorf("kafka settings are required for version 2")
-			}
-
-			batchTimeout := a.cfg.KafkaSettings.BatchTimeout
-			if batchTimeout <= 0 {
-				batchTimeout = time.Second
-			}
-			kafkaQueue, err := queue.NewKafkaLogQueue(queue.KafkaConfig{
-				Brokers:        a.cfg.KafkaSettings.Brokers,
-				Topic:          a.cfg.KafkaSettings.Topic,
-				GroupID:        a.cfg.KafkaSettings.GroupID,
-				BatchSize:      a.cfg.KafkaSettings.BatchSize,
-				BatchTimeout:   batchTimeout,
-				Consumers:      a.cfg.KafkaSettings.Consumers,
-				RequireAllAcks: a.cfg.KafkaSettings.RequireAllAcks,
-				BatchBytes:     a.cfg.KafkaSettings.BatchBytes,
-				Compression:    a.cfg.KafkaSettings.Compression,
-				Async:          a.cfg.KafkaSettings.Async,
-			}, a.logger)
-			if err != nil {
-				return fmt.Errorf("configure kafka: %w", err)
-			}
-
-			queueImpl = kafkaQueue
-			consumerSvc = service.NewConsumerService(queueImpl, store, consumerBatchCfg, a.logger, kafkaQueue.Close)
-			if err := consumerSvc.Start(ctx); err != nil {
-				return fmt.Errorf("start kafka consumers: %w", err)
-			}
-			defer consumerSvc.Close()
-
-			producerCfg := &service.ProducerConfig{
-				QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
-				Workers:               a.cfg.Ingestion.ProducerWorkers,
-				WriteTimeout:          producerWriteTimeout,
-				QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
-			}
-			producerSvc = service.NewProducerService(queueImpl, a.logger, producerCfg)
-			producerSvc.Start()
-			defer producerSvc.Close()
-		} else {
-			queueImpl = queue.NoopQueue{}
-		}
-
-		ingestionSvc := service.NewIngestionService(store, producerSvc, mode, a.logger)
-		defer ingestionSvc.Close()
-
-		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
-		aggSvc.Start(ctx)
-
-		mux := http.NewServeMux()
-		handler := httpapi.NewHandler(ingestionSvc, a.logger)
-		handler.RegisterRoutes(mux)
-		mux.Handle("/metrics", promhttp.Handler())
-		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok"))
-		})
-
-		server := &http.Server{
-			Addr:    a.cfg.Addr,
-			Handler: mux,
-		}
+		defer cleanup()
 
 		go func() {
 			a.logger.Info("server listening", loggerpkg.F("addr", a.cfg.Addr), loggerpkg.F("version", a.cfg.Version))
