@@ -141,6 +141,7 @@ func (p *ProducerService) Start() {
 }
 
 // Enqueue buffers a batch for asynchronous publishing.
+// Can be call from other service to load data into channel
 func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) error {
 	if len(batch) == 0 {
 		return nil

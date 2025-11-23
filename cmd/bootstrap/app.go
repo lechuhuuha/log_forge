@@ -12,7 +12,6 @@ import (
 
 	"github.com/lechuhuuha/log_forge/config"
 	httpapi "github.com/lechuhuuha/log_forge/internal/http"
-	"github.com/lechuhuuha/log_forge/internal/profileutil"
 	"github.com/lechuhuuha/log_forge/internal/queue"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 	"github.com/lechuhuuha/log_forge/repo"
@@ -200,7 +199,7 @@ func (a *App) Run(ctx context.Context) error {
 		profileName := util.GetEnv(util.ProfileName, fmt.Sprintf("version%d", a.cfg.Version))
 		dir := util.GetEnv(util.ProfileDir, util.DefaultProfileDir)
 		a.logger.Info("profiling enabled", loggerpkg.F("dir", dir), loggerpkg.F("profile", profileName))
-		if err := profileutil.WithProfiling(dir, profileName, a.logger, run); err != nil {
+		if err := util.WithProfiling(dir, profileName, a.logger, run); err != nil {
 			return err
 		}
 		return nil
