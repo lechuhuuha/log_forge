@@ -22,8 +22,9 @@ func MaybeStartPprof(logger loggerpkg.Logger) {
 	if !ProfileEnabled() {
 		return
 	}
+	// TODO: Load ProfileAddr from config file
 	addr := GetEnv(ProfileAddr, DefaultProfileAddr)
-	go func() {
+	go func() { // TODO: Move this to cmd for centralize server start
 		mux := http.NewServeMux()
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
