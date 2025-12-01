@@ -40,16 +40,15 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 - **Packages**
   - `cmd`: entrypoint wiring.
   - `cmd/bootstrap`: CLI parsing, logger/observability wiring, and app assembly.
-  - `internal/domain`: `LogRecord`, `LogStore`, `LogQueue` definitions.
-  - `internal/service`: ingestion orchestration (mode-aware) and aggregation worker.
+  - `service`: ingestion orchestration (mode-aware) and background workers (producer/consumer/aggregation).
   - `internal/http`: handlers and routing.
 - `repo`: file-based repository (mutex per file path, NDJSON writes).
 - `model`: shared types (`LogRecord`, `LogQueue`, `ConsumedMessage`).
-  - `internal/queue`: `NoopQueue` (v1) + Kafka implementation (v2).
+  - `internal/queue`: Kafka implementation for version 2 (version 1 writes directly to storage).
   - `internal/metrics`: counters, Go/process collectors with idempotent registration.
 - **Configuration**
-  - Flags/env for quick overrides (e.g., `-version`, `HTTP_ADDR`, `KAFKA_BROKERS`).
-- YAML config (`-config=...`) to set server, directories, aggregation interval, Kafka settings. Samples in `config/examples/` for Docker and local runs.
+  - Flags provide quick overrides on top of the YAML config file; env vars only toggle profiling helpers.
+- YAML config (`-config=...`) sets server, directories, aggregation interval, Kafka settings. Samples in `config/examples/` for Docker and local runs.
 - **Aggregation**
   - Only processes the **current UTC hour** to avoid re-reading all history.
   - Writes summaries with RFC3339 hour identifier and nested maps for counts.
