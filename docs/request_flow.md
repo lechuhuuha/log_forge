@@ -10,7 +10,7 @@ flowchart TD
     Consumers{{Consumer goroutines}}
     NDJSON[(logs/YYYY-MM-DD/HH.log.json)]
     Aggregator[AggregationService\nservice/aggregation.go]
-    Analytics[(analytics/summary_HH.json)]
+    Analytics[(analytics/YYYY-MM-DD/summary_HH.json)]
     PromScraper((Prometheus))
     Metrics[/metrics endpoint/]
     Logger[(Structured logger\nshared pkg)]

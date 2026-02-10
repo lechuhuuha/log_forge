@@ -1,6 +1,5 @@
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/server
-VERSION ?= 2
 COMPOSE ?= docker compose
 PPROF_ADDR_V1 ?= :6062
 PPROF_ADDR_V2 ?= :6063
@@ -19,10 +18,10 @@ build:
 	go build -o $(BINARY) ./cmd
 
 run: build
-	./$(BINARY) -version=$(VERSION)
+	./$(BINARY) -config=config/examples/config.v2.local.yaml
 
 run-v1: build
-	./$(BINARY) -version=1
+	./$(BINARY) -config=config/examples/config.v1.local.yaml
 
 run-v2: build
 	./$(BINARY) -config=config/examples/config.v2.local.yaml
@@ -34,7 +33,7 @@ capture-profile-v2: build
 	PROFILE_CAPTURE=1 PROFILE_NAME=v2 PROFILE_DIR=$(PROFILES_DIR) ./$(BINARY) -config=config/examples/config.v2.local.yaml
 
 profile-run-v1: build
-	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -version=1 -config=config/examples/config.v1.local.yaml
+	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V1) ./$(BINARY) -config=config/examples/config.v1.local.yaml
 
 profile-run-v2: build
 	PROFILE_ENABLED=1 PROFILE_ADDR=$(PPROF_ADDR_V2) ./$(BINARY) -config=config/examples/config.v2.local.yaml

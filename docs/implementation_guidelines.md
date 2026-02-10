@@ -33,7 +33,7 @@ Use these guardrails whenever you add or modify code so the project keeps its cu
   - Queue implementations (Kafka) handle encode/decode, backoff/retry, DLQ writing on failure.
 
 - **Configuration & defaults**
-  - CLI config is parsed in `cmd/bootstrap` then merged with optional file config (`config.Load`).
+  - Startup is config-file-driven: pass `-config=...` and load settings from YAML (`config.Load`).
   - Apply sane defaults for missing values (addr, dirs, intervals, queue sizes).
   - Keep version-specific wiring in `cmd/bootstrap` (e.g., switch between direct file writes and Kafka mode).
 

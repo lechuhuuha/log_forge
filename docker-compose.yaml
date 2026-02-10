@@ -40,7 +40,7 @@ services:
     container_name: app-v1
     command: ["/app/server", "-config=/config/config.v1.yaml"]
     volumes:
-      - ./configs:/config:ro
+      - ./config/examples:/config:ro
       - ./data/v1/logs:/data/v1/logs
       - ./data/v1/analytics:/data/v1/analytics
     ports:
@@ -52,7 +52,7 @@ services:
     container_name: app-v2
     command: ["/app/server", "-config=/config/config.v2.yaml"]
     volumes:
-      - ./configs:/config:ro
+      - ./config/examples:/config:ro
       - ./data/v2/logs:/data/v2/logs
       - ./data/v2/analytics:/data/v2/analytics
     depends_on:

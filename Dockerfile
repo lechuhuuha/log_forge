@@ -12,5 +12,6 @@ FROM alpine:3.18
 WORKDIR /app
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/server /app/server
+COPY config/examples /config
 EXPOSE 8082
-CMD ["/app/server", "-version=1"]
+CMD ["/app/server", "-config=/config/config.v1.yaml"]

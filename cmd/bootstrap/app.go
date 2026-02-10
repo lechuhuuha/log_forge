@@ -37,7 +37,7 @@ type App struct {
 	logger loggerpkg.Logger
 }
 
-// NewApp loads any file-based configuration overrides and returns a ready-to-run App.
+// NewApp loads file-based configuration and returns a ready-to-run App.
 func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 	if strings.TrimSpace(cliCfg.ConfigPath) == "" {
 		return nil, errors.New("config file path is required")

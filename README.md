@@ -47,7 +47,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
   - `internal/queue`: Kafka implementation for version 2 (version 1 writes directly to storage).
   - `internal/metrics`: counters, Go/process collectors with idempotent registration.
 - **Configuration**
-  - Flags provide quick overrides on top of the YAML config file; env vars only toggle profiling helpers.
+  - YAML config is the runtime source of truth; env vars only toggle profiling helpers.
 - YAML config (`-config=...`) sets server, directories, aggregation interval, Kafka settings. Samples in `config/examples/` for Docker and local runs.
 - **Aggregation**
   - Only processes the **current UTC hour** to avoid re-reading all history.
@@ -62,10 +62,10 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 |---------|-----------|-----------|
 | Batch JSON/CSV ingestion | ✅ direct file write | ✅ enqueue to Kafka |
 | Hourly NDJSON storage | ✅ | ✅ (consumer writes) |
-| Aggregation summaries | ✅ `analytics/summary_<HH>.json` | ✅ same worker |
+| Aggregation summaries | ✅ `analytics/YYYY-MM-DD/summary_<HH>.json` | ✅ same worker |
 | Prometheus metrics | ✅ `/metrics` | ✅ `/metrics` |
 | Kafka scalability | — | ✅ async writer + consumer group |
-| Config via flags/YAML | ✅ | ✅ |
+| Config via YAML | ✅ | ✅ |
 | Docker stack | ✅ | ✅ |
 | Makefile automation | ✅ | ✅ |
 
@@ -80,7 +80,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 | Target | Description |
 |--------|-------------|
 | `make build` | build `bin/server` |
-| `make run-v1` | run Version 1 locally (`-version=1`) |
+| `make run-v1` | run Version 1 locally (uses `config/examples/config.v1.local.yaml`) |
 | `make run-v2` | run Version 2 locally (needs Kafka; uses `config/examples/config.v2.local.yaml`) |
 | `make stack-up` | build & run Kafka + Prometheus + app v1/v2 containers; ensure `logs` topic |
 | `make stack-down` | tear down stack |
@@ -97,7 +97,7 @@ curl -X POST -H "Content-Type: application/json" \
      -d @testdata/sample_logs.json \
      http://localhost:8082/logs
 ```
-Hourly files: `logs/YYYY-MM-DD/HH.log.json`, analytics: `analytics/summary_HH.json`.
+Hourly files: `logs/YYYY-MM-DD/HH.log.json`, analytics: `analytics/YYYY-MM-DD/summary_HH.json`.
 
 ### Running Version 2 locally (app outside Docker)
 ```bash
@@ -175,7 +175,7 @@ flowchart TD
     KafkaConsumers --> Store
 
     Store --> Files[[logs/YYYY-MM-DD/HH.log.json]] --> Aggregator
-    Aggregator --> Analytics[[analytics/summary_HH.json]]
+    Aggregator --> Analytics[[analytics/YYYY-MM-DD/summary_HH.json]]
 
     PromHTTP --> Metrics[(Prometheus registry)]
 ```
