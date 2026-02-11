@@ -117,7 +117,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		PersistTimeout: a.cfg.Consumer.PersistTimeout,
 	}
 
-	storeRepo := repo.NewFileRepo(a.cfg.LogsDir, a.logger)
+	storeRepo := repo.NewFileRepo(a.cfg.LogsDir)
 	var (
 		mode        service.PipelineMode = service.ModeDirect
 		producerSvc *service.ProducerService

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/util"
 )
@@ -16,19 +15,14 @@ import (
 // FileRepo persists logs to disk using an hourly NDJSON layout.
 type FileRepo struct {
 	baseDir   string
-	logger    loggerpkg.Logger
 	mu        sync.Mutex
 	fileLocks map[string]*sync.Mutex
 }
 
 // NewFileRepo returns a new file-backed Repository implementation.
-func NewFileRepo(baseDir string, logr loggerpkg.Logger) *FileRepo {
-	if logr == nil {
-		logr = loggerpkg.NewNop()
-	}
+func NewFileRepo(baseDir string) *FileRepo {
 	return &FileRepo{
 		baseDir:   baseDir,
-		logger:    logr,
 		fileLocks: make(map[string]*sync.Mutex),
 	}
 }

@@ -76,7 +76,6 @@ type ProducerService struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	queueBufferSize         int
 	workers                 int
 	writeTimeout            time.Duration
 	queueHighWaterPercent   float64
@@ -145,7 +144,6 @@ func NewProducerService(queue model.LogQueue, logr loggerpkg.Logger, cfg *Produc
 		workCh:                  make(chan []model.LogRecord, bufferSize),
 		ctx:                     ctx,
 		cancel:                  cancel,
-		queueBufferSize:         bufferSize,
 		workers:                 workers,
 		writeTimeout:            writeTimeout,
 		queueHighWaterPercent:   highWater,

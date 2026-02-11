@@ -109,7 +109,7 @@ func TestFileRepoSaveBatch(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			baseDir := t.TempDir()
-			r := NewFileRepo(baseDir, nil)
+			r := NewFileRepo(baseDir)
 			err := tc.setup(t, r)
 			tc.assertion(t, baseDir, err)
 		})
@@ -140,7 +140,7 @@ func TestLockFor(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewFileRepo(t.TempDir(), nil)
+			r := NewFileRepo(t.TempDir())
 			a := r.lockFor(tc.pathA)
 			b := r.lockFor(tc.pathB)
 			if gotSame := a == b; gotSame != tc.same {

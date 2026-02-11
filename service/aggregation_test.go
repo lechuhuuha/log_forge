@@ -16,16 +16,13 @@ import (
 
 func TestAggregationService(t *testing.T) {
 	cases := []struct {
-		name        string
-		seed        func(t *testing.T, logsDir string)
-		run         func(ctx context.Context, agg *AggregationService) error
-		verify      func(t *testing.T, analyticsDir string)
-		targetHour  time.Time
-		analyticsAt func(logsDir string) string
+		name   string
+		seed   func(t *testing.T, logsDir string)
+		run    func(ctx context.Context, agg *AggregationService) error
+		verify func(t *testing.T, analyticsDir string)
 	}{
 		{
-			name:       "aggregate single hour",
-			targetHour: time.Date(2025, 11, 15, 14, 30, 0, 0, time.UTC),
+			name: "aggregate single hour",
 			seed: func(t *testing.T, logsDir string) {
 				hour := time.Date(2025, 11, 15, 14, 30, 0, 0, time.UTC)
 				dateDir := filepath.Join(logsDir, hour.Format(util.DateLayout))
