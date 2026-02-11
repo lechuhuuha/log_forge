@@ -34,7 +34,7 @@ func (m *mockStore) SaveBatch(ctx context.Context, records []model.LogRecord) er
 }
 
 func newHandlerWithStore(store repo.Repository) *Handler {
-	ingestion := service.NewIngestionService(store, nil, service.ModeDirect, nil)
+	ingestion := service.NewIngestionService(store, nil, service.ModeDirect, false, nil)
 	return NewHandler(ingestion, nil)
 }
 
@@ -115,12 +115,12 @@ func TestHandleLogs(t *testing.T) {
 			},
 		},
 		{
-			name:        "ingestion error returns internal server error",
+			name:        "ingestion error returns service unavailable",
 			contentType: "application/json",
 			body:        `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`,
 			storeErr:    context.DeadlineExceeded,
 			expect: expect{
-				status:       http.StatusInternalServerError,
+				status:       http.StatusServiceUnavailable,
 				callCount:    1,
 				batches:      0,
 				invalidDelta: 0,
@@ -174,6 +174,76 @@ func TestHandleLogs(t *testing.T) {
 
 			if delta := counterValue(t, "invalid_requests_total") - startInvalid; delta != float64(tc.expect.invalidDelta) {
 				t.Fatalf("expected invalid_requests_total delta %d, got %.0f", tc.expect.invalidDelta, delta)
+			}
+		})
+	}
+}
+
+type errProducer struct {
+	err error
+}
+
+func (p errProducer) Enqueue(ctx context.Context, records []model.LogRecord) error {
+	return p.err
+}
+
+func (p errProducer) EnqueueSync(ctx context.Context, records []model.LogRecord) error {
+	return p.err
+}
+
+func TestHandleLogsQueueErrors(t *testing.T) {
+	cases := []struct {
+		name       string
+		producerErr error
+		wantStatus int
+		wantRetry  bool
+	}{
+		{
+			name:       "queue full maps to 429",
+			producerErr: service.ErrQueueFull,
+			wantStatus: http.StatusTooManyRequests,
+			wantRetry:  true,
+		},
+		{
+			name:       "producer stopped maps to 503",
+			producerErr: service.ErrProducerStopped,
+			wantStatus: http.StatusServiceUnavailable,
+			wantRetry:  true,
+		},
+		{
+			name:       "deadline exceeded maps to 503",
+			producerErr: context.DeadlineExceeded,
+			wantStatus: http.StatusServiceUnavailable,
+			wantRetry:  true,
+		},
+		{
+			name:       "producer not started maps to 503",
+			producerErr: service.ErrProducerNotStarted,
+			wantStatus: http.StatusServiceUnavailable,
+			wantRetry:  true,
+		},
+	}
+
+	body := `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ingestion := service.NewIngestionService(nil, errProducer{err: tc.producerErr}, service.ModeQueue, false, nil)
+			handler := NewHandler(ingestion, nil)
+
+			req := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.handleLogs(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+			if tc.wantRetry {
+				if got := rec.Header().Get("Retry-After"); got == "" {
+					t.Fatalf("expected Retry-After header to be set")
+				}
 			}
 		})
 	}

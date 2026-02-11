@@ -28,24 +28,26 @@ var (
 
 // IngestionService orchestrates log ingestion across versions.
 type IngestionService struct {
-	repo     repo.Repository
-	producer Producer
-	mode     PipelineMode
-	logger   loggerpkg.Logger
+	repo         repo.Repository
+	producer     Producer
+	mode         PipelineMode
+	logger       loggerpkg.Logger
+	syncOnIngest bool
 
 	closed atomic.Bool
 }
 
 // NewIngestionService creates a new ingestion service.
-func NewIngestionService(repository repo.Repository, producer Producer, mode PipelineMode, logr loggerpkg.Logger) *IngestionService {
+func NewIngestionService(repository repo.Repository, producer Producer, mode PipelineMode, syncOnIngest bool, logr loggerpkg.Logger) *IngestionService {
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
 	return &IngestionService{
-		repo:     repository,
-		producer: producer,
-		mode:     mode,
-		logger:   logr,
+		repo:         repository,
+		producer:     producer,
+		mode:         mode,
+		logger:       logr,
+		syncOnIngest: syncOnIngest,
 	}
 }
 
@@ -68,7 +70,13 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.Log
 		if s.producer == nil {
 			return errors.New("producer not configured")
 		}
-		if err := s.producer.Enqueue(ctx, records); err != nil {
+		if s.syncOnIngest {
+			if err := s.producer.EnqueueSync(ctx, records); err != nil {
+				metrics.IncIngestErrors()
+				s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
+				return err
+			}
+		} else if err := s.producer.Enqueue(ctx, records); err != nil {
 			metrics.IncIngestErrors()
 			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
 			return err

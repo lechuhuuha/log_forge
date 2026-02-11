@@ -41,6 +41,10 @@ func (m *mockProducer) Enqueue(ctx context.Context, records []model.LogRecord) e
 	return m.err
 }
 
+func (m *mockProducer) EnqueueSync(ctx context.Context, records []model.LogRecord) error {
+	return m.Enqueue(ctx, records)
+}
+
 func TestIngestionService_ProcessBatch(t *testing.T) {
 	now := time.Now()
 	records := []model.LogRecord{{
@@ -54,6 +58,7 @@ func TestIngestionService_ProcessBatch(t *testing.T) {
 		mode          PipelineMode
 		store         *mockStore
 		producer      *mockProducer
+		syncOnIngest  bool
 		expectErr     bool
 		expectBatches int
 	}{
@@ -67,6 +72,13 @@ func TestIngestionService_ProcessBatch(t *testing.T) {
 			name:          "queue mode uses producer",
 			mode:          ModeQueue,
 			producer:      &mockProducer{},
+			expectBatches: 1,
+		},
+		{
+			name:         "queue mode uses sync producer when enabled",
+			mode:         ModeQueue,
+			producer:     &mockProducer{},
+			syncOnIngest: true,
 			expectBatches: 1,
 		},
 		{
@@ -86,7 +98,12 @@ func TestIngestionService_ProcessBatch(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewIngestionService(tc.store, tc.producer, tc.mode, loggerpkg.NewNop())
+			var producer Producer
+			if tc.producer != nil {
+				producer = tc.producer
+			}
+
+			svc := NewIngestionService(tc.store, producer, tc.mode, tc.syncOnIngest, loggerpkg.NewNop())
 			if tc.mode == ModeQueue {
 				t.Cleanup(svc.Close)
 			}

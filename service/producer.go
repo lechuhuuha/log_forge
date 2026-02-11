@@ -19,6 +19,7 @@ import (
 // Producer sends log batches to a downstream queue.
 type Producer interface {
 	Enqueue(ctx context.Context, batch []model.LogRecord) error
+	EnqueueSync(ctx context.Context, batch []model.LogRecord) error
 }
 
 // ProducerConfig tunes buffering and retry behavior before writing to the queue.
@@ -47,6 +48,8 @@ var (
 	ErrProducerStopped = errors.New("producer stopped")
 	// ErrProducerNotStarted indicates Start has not been invoked.
 	ErrProducerNotStarted = errors.New("producer not started")
+	// ErrQueueFull indicates the producer buffer is at capacity.
+	ErrQueueFull = errors.New("producer queue full")
 )
 
 // ProducerService implements buffered, retried publishing to a LogQueue.
@@ -152,6 +155,13 @@ func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) 
 	if p.closed.Load() {
 		return ErrProducerStopped
 	}
+	if ctx != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
 	select {
 	case p.workCh <- batch:
 		currentDepth := len(p.workCh)
@@ -162,9 +172,27 @@ func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) 
 				loggerpkg.F("capacity", cap(p.workCh)))
 		}
 		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		metrics.SetIngestionQueueDepth(len(p.workCh))
+		return ErrQueueFull
 	}
+}
+
+// EnqueueSync publishes a batch directly to the queue with retry logic.
+func (p *ProducerService) EnqueueSync(ctx context.Context, batch []model.LogRecord) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if !p.started.Load() {
+		return ErrProducerNotStarted
+	}
+	if p.closed.Load() {
+		return ErrProducerStopped
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return p.tryEnqueueWithRetry(ctx, batch, -1)
 }
 
 // Close stops accepting new work and waits for in-flight batches to finish.
@@ -190,43 +218,56 @@ func (p *ProducerService) runProducer(workerID int) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		success := p.tryEnqueueWithRetry(ctx, batch, workerID)
-		if !success {
-			p.writeProducerDLQ(batch, fmt.Errorf("enqueue failed after %d retries", p.maxRetries))
+		if err := p.tryEnqueueWithRetry(ctx, batch, workerID); err != nil {
+			p.writeProducerDLQ(batch, err)
 		}
 		metrics.SetIngestionQueueDepth(len(p.workCh))
 	}
 }
 
-func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model.LogRecord, workerID int) bool {
+func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model.LogRecord, workerID int) error {
 	maxAttempts := p.maxRetries + 1
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		produceCtx, cancel := context.WithTimeout(ctx, p.writeTimeout)
 		err := p.queue.EnqueueBatch(produceCtx, batch)
 		cancel()
 		if err == nil {
-			return true
+			return nil
 		}
+		lastErr = err
 		metrics.IncIngestErrors()
-		p.logger.Error("failed to enqueue logs",
+		logFields := []loggerpkg.Field{
 			loggerpkg.F("error", err),
-			loggerpkg.F("worker_id", workerID),
 			loggerpkg.F("attempt", attempt),
-			loggerpkg.F("max_attempts", maxAttempts))
+			loggerpkg.F("max_attempts", maxAttempts),
+		}
+		if workerID >= 0 {
+			logFields = append(logFields, loggerpkg.F("worker_id", workerID))
+		} else {
+			logFields = append(logFields, loggerpkg.F("mode", "sync"))
+		}
+		p.logger.Error("failed to enqueue logs", logFields...)
 		if attempt == maxAttempts {
-			return false
+			return lastErr
 		}
 		backoff := p.retryBackoff * time.Duration(attempt)
 		select {
 		case <-ctx.Done():
-			return false
+			return ctx.Err()
 		case <-time.After(backoff):
 		}
 	}
-	return false
+	if lastErr == nil {
+		return errors.New("enqueue failed")
+	}
+	return lastErr
 }
 
 func (p *ProducerService) writeProducerDLQ(batch []model.LogRecord, reason error) {

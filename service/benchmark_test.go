@@ -91,7 +91,7 @@ func BenchmarkIngestionProcessBatchDirect(b *testing.B) {
 		tc := tc
 		b.Run(tc.name, func(b *testing.B) {
 			store := benchmarkStore{}
-			svc := NewIngestionService(store, nil, ModeDirect, nil)
+			svc := NewIngestionService(store, nil, ModeDirect, false, nil)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -130,7 +130,7 @@ func BenchmarkIngestionProcessBatchQueue(b *testing.B) {
 			producer := NewProducerService(queue, nil, prodCfg)
 			producer.Start()
 			b.Cleanup(producer.Close)
-			svc := NewIngestionService(nil, producer, ModeQueue, nil)
+			svc := NewIngestionService(nil, producer, ModeQueue, false, nil)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

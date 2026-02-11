@@ -164,7 +164,7 @@ stack-up:
 	$(MAKE) kafka-topic
 
 stack-down:
-	$(COMPOSE) down
+	$(COMPOSE) down -v
 
 infra-up:
 	$(COMPOSE) up -d kafka prometheus

@@ -146,7 +146,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
 	aggSvc.Start(ctx)
 
-	ingestionSvc := service.NewIngestionService(storeRepo, producerSvc, mode, a.logger)
+	ingestionSvc := service.NewIngestionService(storeRepo, producerSvc, mode, a.cfg.Ingestion.SyncOnIngest, a.logger)
 	cleanups = append(cleanups, func() { ingestionSvc.Close() })
 
 	mux := http.NewServeMux()

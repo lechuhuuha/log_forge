@@ -6,6 +6,8 @@ storage:
   analyticsDir: "/data/v2/analytics"
 aggregation:
   interval: 30s
+ingestion:
+  syncOnIngest: true
 kafka:
   brokers:
     - kafka:9092
@@ -14,4 +16,5 @@ kafka:
   batchSize: 100
   batchTimeout: 1s
   consumers: 1
+  async: false
   requireAllAcks: true

@@ -59,6 +59,7 @@ type IngestionSettings struct {
 	ProducerWorkers       int           `yaml:"producerWorkers"`
 	ProducerWriteTimeout  time.Duration `yaml:"producerWriteTimeout"`
 	QueueHighWaterPercent float64       `yaml:"queueHighWaterPercent"`
+	SyncOnIngest          bool          `yaml:"syncOnIngest"`
 }
 
 // ConsumerSettings configures consumer-side batching to disk.

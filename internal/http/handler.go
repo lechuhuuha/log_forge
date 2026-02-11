@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -51,7 +52,19 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.ingestion.ProcessBatch(r.Context(), records); err != nil {
 		h.logger.Error("failed to process logs", loggerpkg.F("error", err))
-		http.Error(w, "failed to process logs", http.StatusInternalServerError)
+		switch {
+		case errors.Is(err, service.ErrQueueFull):
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "queue full", http.StatusTooManyRequests)
+		case errors.Is(err, service.ErrProducerNotStarted),
+			errors.Is(err, service.ErrProducerStopped),
+			errors.Is(err, context.DeadlineExceeded),
+			errors.Is(err, context.Canceled):
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		default:
+			http.Error(w, "failed to process logs", http.StatusInternalServerError)
+		}
 		return
 	}
 

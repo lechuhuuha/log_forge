@@ -27,7 +27,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 		{
 			name: "mode and close in queue returns stopped",
 			setup: func() *IngestionService {
-				svc := NewIngestionService(nil, nil, ModeQueue, nil)
+				svc := NewIngestionService(nil, nil, ModeQueue, false, nil)
 				return svc
 			},
 			records: records,
@@ -42,7 +42,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 		{
 			name: "direct mode missing repository",
 			setup: func() *IngestionService {
-				return NewIngestionService(nil, nil, ModeDirect, nil)
+				return NewIngestionService(nil, nil, ModeDirect, false, nil)
 			},
 			records: records,
 			wantErr: errors.New("log store not configured"),
@@ -50,7 +50,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 		{
 			name: "queue mode missing producer",
 			setup: func() *IngestionService {
-				return NewIngestionService(nil, nil, ModeQueue, nil)
+				return NewIngestionService(nil, nil, ModeQueue, false, nil)
 			},
 			records: records,
 			wantErr: errors.New("producer not configured"),
@@ -58,7 +58,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 		{
 			name: "empty batch is noop",
 			setup: func() *IngestionService {
-				return NewIngestionService(nil, nil, ModeDirect, nil)
+				return NewIngestionService(nil, nil, ModeDirect, false, nil)
 			},
 			records: nil,
 			wantNil: true,

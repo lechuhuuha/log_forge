@@ -84,9 +84,9 @@ func TestProducerServiceAdditionalPaths(t *testing.T) {
 
 func TestProducerServiceRetryPaths(t *testing.T) {
 	cases := []struct {
-		name string
-		ctx  func() context.Context
-		want bool
+		name    string
+		ctx     func() context.Context
+		wantErr error
 	}{
 		{
 			name: "retry fails when context canceled",
@@ -95,7 +95,7 @@ func TestProducerServiceRetryPaths(t *testing.T) {
 				cancel()
 				return ctx
 			},
-			want: false,
+			wantErr: context.Canceled,
 		},
 	}
 
@@ -106,13 +106,13 @@ func TestProducerServiceRetryPaths(t *testing.T) {
 				MaxRetries:   5,
 				RetryBackoff: time.Second,
 			})
-			ok := p.tryEnqueueWithRetry(tc.ctx(), []model.LogRecord{{
+			err := p.tryEnqueueWithRetry(tc.ctx(), []model.LogRecord{{
 				Timestamp: time.Now().UTC(),
 				Path:      "/x",
 				UserAgent: "ua",
 			}}, 1)
-			if ok != tc.want {
-				t.Fatalf("unexpected retry result: got=%v want=%v", ok, tc.want)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("unexpected retry error: got=%v want=%v", err, tc.wantErr)
 			}
 		})
 	}
