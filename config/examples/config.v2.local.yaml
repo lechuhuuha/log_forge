@@ -34,5 +34,5 @@ kafka:
   compression: none
   async: false
   # use enough consumers to cover partitions and keep up with bursts
-  consumers: 12
+  consumers: 10
   requireAllAcks: true

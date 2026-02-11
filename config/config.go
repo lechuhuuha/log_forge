@@ -105,7 +105,7 @@ type ConsumerSettings struct {
 
 // KafkaSettings captures Kafka queue configuration.
 type KafkaSettings struct {
-	// Brokers is the broker bootstrap list.
+	// Brokers is the list of server instance in an Apache Kafka cluster.
 	Brokers []string `yaml:"brokers"`
 	// Topic is the topic used for log ingestion.
 	Topic string `yaml:"topic"`
