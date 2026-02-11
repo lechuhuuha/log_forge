@@ -41,6 +41,18 @@ func TestCounters(t *testing.T) {
 			inc:    IncAggregationRuns,
 			delta:  1,
 		},
+		{
+			name:   "kafka consumer errors",
+			metric: "kafka_consumer_errors_total",
+			inc:    IncKafkaConsumerErrors,
+			delta:  1,
+		},
+		{
+			name:   "kafka writer errors",
+			metric: "kafka_writer_errors_total",
+			inc:    IncKafkaWriterErrors,
+			delta:  1,
+		},
 	}
 
 	for _, tc := range cases {
@@ -84,6 +96,27 @@ func TestSetIngestionQueueDepth(t *testing.T) {
 			SetIngestionQueueDepth(tc.value)
 			if got := gaugeValue(t, "ingestion_work_queue_depth"); got != tc.want {
 				t.Fatalf("unexpected queue depth: got=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetKafkaUp(t *testing.T) {
+	cases := []struct {
+		name string
+		up   bool
+		want float64
+	}{
+		{name: "set up", up: true, want: 1},
+		{name: "set down", up: false, want: 0},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			SetKafkaUp(tc.up)
+			if got := gaugeValue(t, "kafka_up"); got != tc.want {
+				t.Fatalf("unexpected kafka_up gauge: got=%v want=%v", got, tc.want)
 			}
 		})
 	}

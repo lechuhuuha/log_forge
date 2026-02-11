@@ -22,6 +22,11 @@ import (
 // AppConfig holds the runtime options required to start the application.
 type AppConfig struct {
 	Addr                string
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	RequestTimeout      time.Duration
 	Version             int
 	LogsDir             string
 	AnalyticsDir        string
@@ -63,6 +68,11 @@ func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 
 	appCfg := AppConfig{
 		Addr:                fileCfg.Server.Addr,
+		ReadHeaderTimeout:   fileCfg.Server.ReadHeaderTimeout,
+		ReadTimeout:         fileCfg.Server.ReadTimeout,
+		WriteTimeout:        fileCfg.Server.WriteTimeout,
+		IdleTimeout:         fileCfg.Server.IdleTimeout,
+		RequestTimeout:      fileCfg.Server.RequestTimeout,
 		Version:             fileCfg.Version,
 		LogsDir:             fileCfg.Storage.LogsDir,
 		AnalyticsDir:        fileCfg.Storage.AnalyticsDir,
@@ -125,6 +135,11 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		if err != nil {
 			return nil, runCleanups, fmt.Errorf("configure kafka: %w", err)
 		}
+		checkCtx, checkCancel := context.WithTimeout(ctx, util.KafkaStartupCheckTimeout)
+		defer checkCancel()
+		if err := logQueue.CheckConnectivity(checkCtx); err != nil {
+			return nil, runCleanups, fmt.Errorf("kafka startup check: %w", err)
+		}
 
 		consumerSvc := service.NewConsumerService(logQueue, storeRepo, consumerBatchCfg, a.logger, logQueue.Close)
 		if err := consumerSvc.Start(ctx); err != nil {
@@ -133,10 +148,12 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		cleanups = append(cleanups, func() { consumerSvc.Close() })
 
 		producerCfg := &service.ProducerConfig{
-			QueueBufferSize:       a.cfg.Ingestion.QueueBufferSize,
-			Workers:               a.cfg.Ingestion.ProducerWorkers,
-			WriteTimeout:          a.cfg.Ingestion.ProducerWriteTimeout,
-			QueueHighWaterPercent: a.cfg.Ingestion.QueueHighWaterPercent,
+			QueueBufferSize:         a.cfg.Ingestion.QueueBufferSize,
+			Workers:                 a.cfg.Ingestion.ProducerWorkers,
+			WriteTimeout:            a.cfg.Ingestion.ProducerWriteTimeout,
+			QueueHighWaterPercent:   a.cfg.Ingestion.QueueHighWaterPercent,
+			CircuitFailureThreshold: a.cfg.Ingestion.CircuitFailureThreshold,
+			CircuitCooldown:         a.cfg.Ingestion.CircuitCooldown,
 		}
 		producerSvc = service.NewProducerService(logQueue, a.logger, producerCfg)
 		producerSvc.Start()
@@ -150,7 +167,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 	cleanups = append(cleanups, func() { ingestionSvc.Close() })
 
 	mux := http.NewServeMux()
-	handler := httpapi.NewHandler(ingestionSvc, a.logger)
+	handler := httpapi.NewHandler(ingestionSvc, a.logger).WithRequestTimeout(a.cfg.RequestTimeout)
 	handler.RegisterRoutes(mux)
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -159,8 +176,12 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 	})
 
 	server := &http.Server{
-		Addr:    a.cfg.Addr,
-		Handler: mux,
+		Addr:              a.cfg.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: a.cfg.ReadHeaderTimeout,
+		ReadTimeout:       a.cfg.ReadTimeout,
+		WriteTimeout:      a.cfg.WriteTimeout,
+		IdleTimeout:       a.cfg.IdleTimeout,
 	}
 
 	return server, runCleanups, nil

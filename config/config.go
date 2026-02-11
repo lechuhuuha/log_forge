@@ -39,7 +39,12 @@ type Config struct {
 
 // ServerConfig contains HTTP server settings.
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr              string        `yaml:"addr"`
+	ReadHeaderTimeout time.Duration `yaml:"readHeaderTimeout"`
+	ReadTimeout       time.Duration `yaml:"readTimeout"`
+	WriteTimeout      time.Duration `yaml:"writeTimeout"`
+	IdleTimeout       time.Duration `yaml:"idleTimeout"`
+	RequestTimeout    time.Duration `yaml:"requestTimeout"`
 }
 
 // StorageConfig configures directories for raw logs and analytics output.
@@ -55,11 +60,13 @@ type AggregationConfig struct {
 
 // IngestionSettings tunes producer-side buffering before Kafka.
 type IngestionSettings struct {
-	QueueBufferSize       int           `yaml:"queueBufferSize"`
-	ProducerWorkers       int           `yaml:"producerWorkers"`
-	ProducerWriteTimeout  time.Duration `yaml:"producerWriteTimeout"`
-	QueueHighWaterPercent float64       `yaml:"queueHighWaterPercent"`
-	SyncOnIngest          bool          `yaml:"syncOnIngest"`
+	QueueBufferSize         int           `yaml:"queueBufferSize"`
+	ProducerWorkers         int           `yaml:"producerWorkers"`
+	ProducerWriteTimeout    time.Duration `yaml:"producerWriteTimeout"`
+	QueueHighWaterPercent   float64       `yaml:"queueHighWaterPercent"`
+	SyncOnIngest            bool          `yaml:"syncOnIngest"`
+	CircuitFailureThreshold int           `yaml:"circuitFailureThreshold"`
+	CircuitCooldown         time.Duration `yaml:"circuitCooldown"`
 }
 
 // ConsumerSettings configures consumer-side batching to disk.
@@ -104,6 +111,7 @@ func (c *Config) applyDefaults() {
 	if strings.TrimSpace(c.Server.Addr) == "" {
 		c.Server.Addr = ":8082"
 	}
+	c.Server.applyDefaults()
 	if strings.TrimSpace(c.Storage.LogsDir) == "" {
 		c.Storage.LogsDir = "logs"
 	}
@@ -118,6 +126,24 @@ func (c *Config) applyDefaults() {
 	c.Kafka.applyDefaults()
 }
 
+func (s *ServerConfig) applyDefaults() {
+	if s.ReadHeaderTimeout == 0 {
+		s.ReadHeaderTimeout = 2 * time.Second
+	}
+	if s.ReadTimeout == 0 {
+		s.ReadTimeout = 10 * time.Second
+	}
+	if s.WriteTimeout == 0 {
+		s.WriteTimeout = 10 * time.Second
+	}
+	if s.IdleTimeout == 0 {
+		s.IdleTimeout = 60 * time.Second
+	}
+	if s.RequestTimeout == 0 {
+		s.RequestTimeout = 5 * time.Second
+	}
+}
+
 func (i *IngestionSettings) applyDefaults() {
 	if i.QueueBufferSize == 0 {
 		i.QueueBufferSize = 10000
@@ -130,6 +156,12 @@ func (i *IngestionSettings) applyDefaults() {
 	}
 	if i.QueueHighWaterPercent == 0 {
 		i.QueueHighWaterPercent = 0.9
+	}
+	if i.CircuitFailureThreshold <= 0 {
+		i.CircuitFailureThreshold = 5
+	}
+	if i.CircuitCooldown == 0 {
+		i.CircuitCooldown = 10 * time.Second
 	}
 }
 

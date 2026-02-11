@@ -23,6 +23,22 @@ type mockStore struct {
 	err       error
 }
 
+type blockingStore struct {
+	wait time.Duration
+}
+
+func (b *blockingStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
+	if b.wait <= 0 {
+		b.wait = 50 * time.Millisecond
+	}
+	select {
+	case <-time.After(b.wait):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *mockStore) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	m.callCount++
 	if m.err == nil {
@@ -266,6 +282,12 @@ func TestHandleLogsQueueErrors(t *testing.T) {
 			wantStatus:  http.StatusServiceUnavailable,
 			wantRetry:   true,
 		},
+		{
+			name:        "producer circuit open maps to 503",
+			producerErr: service.ErrProducerCircuitOpen,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
+		},
 	}
 
 	body := `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`
@@ -285,6 +307,52 @@ func TestHandleLogsQueueErrors(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", tc.wantStatus, rec.Code)
 			}
 			if tc.wantRetry {
+				if got := rec.Header().Get("Retry-After"); got == "" {
+					t.Fatalf("expected Retry-After header to be set")
+				}
+			}
+		})
+	}
+}
+
+func TestHandleLogsRequestTimeout(t *testing.T) {
+	cases := []struct {
+		name       string
+		timeout    time.Duration
+		wait       time.Duration
+		wantStatus int
+	}{
+		{
+			name:       "request timeout returns 503",
+			timeout:    10 * time.Millisecond,
+			wait:       100 * time.Millisecond,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "request succeeds within timeout",
+			timeout:    200 * time.Millisecond,
+			wait:       10 * time.Millisecond,
+			wantStatus: http.StatusAccepted,
+		},
+	}
+
+	body := `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ingestion := service.NewIngestionService(&blockingStore{wait: tc.wait}, nil, service.ModeDirect, false, nil)
+			handler := NewHandler(ingestion, nil).WithRequestTimeout(tc.timeout)
+
+			req := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			handler.handleLogs(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+			if tc.wantStatus == http.StatusServiceUnavailable {
 				if got := rec.Header().Get("Retry-After"); got == "" {
 					t.Fatalf("expected Retry-After header to be set")
 				}

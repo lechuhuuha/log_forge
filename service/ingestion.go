@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
@@ -30,6 +31,8 @@ var (
 	ErrLogStoreNotConfigured = errors.New("log store not configured")
 )
 
+const ingestionTransientLogInterval = 5 * time.Second
+
 // IngestionService orchestrates log ingestion across versions.
 type IngestionService struct {
 	repo         repo.Repository
@@ -39,6 +42,9 @@ type IngestionService struct {
 	syncOnIngest bool
 
 	closed atomic.Bool
+
+	lastTransientQueueLogNs atomic.Int64
+	transientQueueErrEvents atomic.Uint64
 }
 
 // NewIngestionService creates a new ingestion service.
@@ -77,12 +83,12 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.Log
 		if s.syncOnIngest {
 			if err := s.producer.EnqueueSync(ctx, records); err != nil {
 				metrics.IncIngestErrors()
-				s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
+				s.logQueueEnqueueError(err)
 				return err
 			}
 		} else if err := s.producer.Enqueue(ctx, records); err != nil {
 			metrics.IncIngestErrors()
-			s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
+			s.logQueueEnqueueError(err)
 			return err
 		}
 		metrics.IncBatchesReceived()
@@ -108,5 +114,47 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.Log
 func (s *IngestionService) Close() {
 	if s.mode == ModeQueue {
 		s.closed.Store(true)
+	}
+}
+
+func (s *IngestionService) logQueueEnqueueError(err error) {
+	if !isTransientQueueError(err) {
+		s.logger.Error("failed to enqueue logs", loggerpkg.F("error", err))
+		return
+	}
+
+	_ = s.transientQueueErrEvents.Add(1)
+
+	now := time.Now().UTC().UnixNano()
+	last := s.lastTransientQueueLogNs.Load()
+	if now-last < int64(ingestionTransientLogInterval) {
+		return
+	}
+	if !s.lastTransientQueueLogNs.CompareAndSwap(last, now) {
+		return
+	}
+
+	events := s.transientQueueErrEvents.Swap(0)
+	if events == 0 {
+		events = 1
+	}
+	s.logger.Warn(
+		"failed to enqueue logs (transient, suppressed)",
+		loggerpkg.F("error", err),
+		loggerpkg.F("events", events),
+	)
+}
+
+func isTransientQueueError(err error) bool {
+	switch {
+	case errors.Is(err, ErrProducerCircuitOpen),
+		errors.Is(err, ErrQueueFull),
+		errors.Is(err, ErrProducerNotStarted),
+		errors.Is(err, ErrProducerStopped),
+		errors.Is(err, context.DeadlineExceeded),
+		errors.Is(err, context.Canceled):
+		return true
+	default:
+		return false
 	}
 }

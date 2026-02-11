@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,23 +26,28 @@ type Producer interface {
 
 // ProducerConfig tunes buffering and retry behavior before writing to the queue.
 type ProducerConfig struct {
-	QueueBufferSize       int
-	Workers               int
-	WriteTimeout          time.Duration
-	QueueHighWaterPercent float64
-	MaxRetries            int
-	RetryBackoff          time.Duration
-	DLQDir                string
+	QueueBufferSize         int
+	Workers                 int
+	WriteTimeout            time.Duration
+	QueueHighWaterPercent   float64
+	MaxRetries              int
+	RetryBackoff            time.Duration
+	DLQDir                  string
+	CircuitFailureThreshold int
+	CircuitCooldown         time.Duration
 }
 
 const (
-	defaultQueueBufferSize       = 10000
-	defaultProducerWorkers       = 10
-	defaultProducerWriteTimeout  = 10 * time.Second
-	defaultQueueHighWaterPercent = 0.9
-	defaultProducerMaxRetries    = 3
-	defaultProducerRetryBackoff  = 200 * time.Millisecond
-	defaultProducerDLQDir        = "dlq/producer"
+	defaultQueueBufferSize         = 10000
+	defaultProducerWorkers         = 10
+	defaultProducerWriteTimeout    = 10 * time.Second
+	defaultQueueHighWaterPercent   = 0.9
+	defaultProducerMaxRetries      = 3
+	defaultProducerRetryBackoff    = 200 * time.Millisecond
+	defaultProducerDLQDir          = "dlq/producer"
+	defaultCircuitFailureThreshold = 5
+	defaultCircuitCooldown         = 10 * time.Second
+	producerTransientLogInterval   = 5 * time.Second
 )
 
 var (
@@ -50,6 +57,8 @@ var (
 	ErrProducerNotStarted = errors.New("producer not started")
 	// ErrQueueFull indicates the producer buffer is at capacity.
 	ErrQueueFull = errors.New("producer queue full")
+	// ErrProducerCircuitOpen indicates the producer is temporarily rejecting work after repeated failures.
+	ErrProducerCircuitOpen = errors.New("producer circuit open")
 )
 
 // ProducerService implements buffered, retried publishing to a LogQueue.
@@ -67,13 +76,21 @@ type ProducerService struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	queueBufferSize       int
-	workers               int
-	writeTimeout          time.Duration
-	queueHighWaterPercent float64
-	maxRetries            int
-	retryBackoff          time.Duration
-	dlqDir                string
+	queueBufferSize         int
+	workers                 int
+	writeTimeout            time.Duration
+	queueHighWaterPercent   float64
+	maxRetries              int
+	retryBackoff            time.Duration
+	dlqDir                  string
+	circuitFailureThreshold int
+	circuitCooldown         time.Duration
+
+	consecutiveFailures atomic.Int32
+	circuitOpenUntilNs  atomic.Int64
+
+	lastTransientErrorLogNs atomic.Int64
+	transientErrorEvents    atomic.Uint64
 }
 
 // NewProducerService wires producer workers around the provided queue.
@@ -89,6 +106,8 @@ func NewProducerService(queue model.LogQueue, logr loggerpkg.Logger, cfg *Produc
 	maxRetries := defaultProducerMaxRetries
 	retryBackoff := defaultProducerRetryBackoff
 	dlqDir := defaultProducerDLQDir
+	circuitFailureThreshold := defaultCircuitFailureThreshold
+	circuitCooldown := defaultCircuitCooldown
 	if cfg != nil {
 		if cfg.QueueBufferSize > 0 {
 			bufferSize = cfg.QueueBufferSize
@@ -111,22 +130,30 @@ func NewProducerService(queue model.LogQueue, logr loggerpkg.Logger, cfg *Produc
 		if cfg.DLQDir != "" {
 			dlqDir = cfg.DLQDir
 		}
+		if cfg.CircuitFailureThreshold > 0 {
+			circuitFailureThreshold = cfg.CircuitFailureThreshold
+		}
+		if cfg.CircuitCooldown > 0 {
+			circuitCooldown = cfg.CircuitCooldown
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	svc := &ProducerService{
-		queue:                 queue,
-		logger:                logr,
-		workCh:                make(chan []model.LogRecord, bufferSize),
-		ctx:                   ctx,
-		cancel:                cancel,
-		queueBufferSize:       bufferSize,
-		workers:               workers,
-		writeTimeout:          writeTimeout,
-		queueHighWaterPercent: highWater,
-		maxRetries:            maxRetries,
-		retryBackoff:          retryBackoff,
-		dlqDir:                dlqDir,
+		queue:                   queue,
+		logger:                  logr,
+		workCh:                  make(chan []model.LogRecord, bufferSize),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		queueBufferSize:         bufferSize,
+		workers:                 workers,
+		writeTimeout:            writeTimeout,
+		queueHighWaterPercent:   highWater,
+		maxRetries:              maxRetries,
+		retryBackoff:            retryBackoff,
+		dlqDir:                  dlqDir,
+		circuitFailureThreshold: circuitFailureThreshold,
+		circuitCooldown:         circuitCooldown,
 	}
 
 	return svc
@@ -154,6 +181,9 @@ func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) 
 	}
 	if p.closed.Load() {
 		return ErrProducerStopped
+	}
+	if p.isCircuitOpen() {
+		return ErrProducerCircuitOpen
 	}
 	if ctx != nil {
 		select {
@@ -188,6 +218,9 @@ func (p *ProducerService) EnqueueSync(ctx context.Context, batch []model.LogReco
 	}
 	if p.closed.Load() {
 		return ErrProducerStopped
+	}
+	if p.isCircuitOpen() {
+		return ErrProducerCircuitOpen
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -239,6 +272,7 @@ func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model
 		err := p.queue.EnqueueBatch(produceCtx, batch)
 		cancel()
 		if err == nil {
+			p.onEnqueueSuccess()
 			return nil
 		}
 		lastErr = err
@@ -253,8 +287,9 @@ func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model
 		} else {
 			logFields = append(logFields, loggerpkg.F("mode", "sync"))
 		}
-		p.logger.Error("failed to enqueue logs", logFields...)
+		p.logEnqueueFailure(err, logFields)
 		if attempt == maxAttempts {
+			p.onEnqueueFailure()
 			return lastErr
 		}
 		backoff := p.retryBackoff * time.Duration(attempt)
@@ -268,6 +303,40 @@ func (p *ProducerService) tryEnqueueWithRetry(ctx context.Context, batch []model
 		return errors.New("enqueue failed")
 	}
 	return lastErr
+}
+
+func (p *ProducerService) isCircuitOpen() bool {
+	until := p.circuitOpenUntilNs.Load()
+	if until == 0 {
+		return false
+	}
+	now := time.Now().UTC().UnixNano()
+	if now < until {
+		return true
+	}
+	p.circuitOpenUntilNs.CompareAndSwap(until, 0)
+	return false
+}
+
+func (p *ProducerService) onEnqueueSuccess() {
+	p.consecutiveFailures.Store(0)
+	p.circuitOpenUntilNs.Store(0)
+}
+
+func (p *ProducerService) onEnqueueFailure() {
+	if p.circuitFailureThreshold <= 0 || p.circuitCooldown <= 0 {
+		return
+	}
+	failures := p.consecutiveFailures.Add(1)
+	if int(failures) < p.circuitFailureThreshold {
+		return
+	}
+	until := time.Now().UTC().Add(p.circuitCooldown)
+	p.circuitOpenUntilNs.Store(until.UnixNano())
+	p.consecutiveFailures.Store(0)
+	p.logger.Warn("producer circuit opened",
+		loggerpkg.F("cooldown", p.circuitCooldown.String()),
+		loggerpkg.F("open_until", until.Format(time.RFC3339Nano)))
 }
 
 func (p *ProducerService) writeProducerDLQ(batch []model.LogRecord, reason error) {
@@ -299,4 +368,64 @@ func (p *ProducerService) writeProducerDLQ(batch []model.LogRecord, reason error
 		return
 	}
 	p.logger.Warn("wrote producer batch to dlq", loggerpkg.F("path", path), loggerpkg.F("count", len(batch)))
+}
+
+func (p *ProducerService) logEnqueueFailure(err error, fields []loggerpkg.Field) {
+	if !isTransientProducerError(err) {
+		p.logger.Error("failed to enqueue logs", fields...)
+		return
+	}
+
+	_ = p.transientErrorEvents.Add(1)
+
+	now := time.Now().UTC().UnixNano()
+	last := p.lastTransientErrorLogNs.Load()
+	if now-last < int64(producerTransientLogInterval) {
+		return
+	}
+	if !p.lastTransientErrorLogNs.CompareAndSwap(last, now) {
+		return
+	}
+
+	events := p.transientErrorEvents.Swap(0)
+	if events == 0 {
+		events = 1
+	}
+	logFields := make([]loggerpkg.Field, 0, len(fields)+1)
+	logFields = append(logFields, fields...)
+	logFields = append(logFields, loggerpkg.F("events", events))
+	p.logger.Warn("failed to enqueue logs (transient, suppressed)", logFields...)
+}
+
+func isTransientProducerError(err error) bool {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded),
+		errors.Is(err, context.Canceled),
+		errors.Is(err, ErrQueueFull),
+		errors.Is(err, ErrProducerCircuitOpen):
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	knownTransientSubstrings := []string{
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"i/o timeout",
+		"dial tcp",
+		"network is unreachable",
+		"leader not available",
+		"temporary failure",
+	}
+	for _, sub := range knownTransientSubstrings {
+		if strings.Contains(msg, sub) {
+			return true
+		}
+	}
+	return false
 }

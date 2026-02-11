@@ -158,21 +158,13 @@ loadtest-v2:
 		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
 	fi
 
-stack-up:
-	$(COMPOSE) up -d --build kafka prometheus app-v1 app-v2
-	@echo "Environment is up. Prometheus at http://localhost:9090, apps at http://localhost:8082 and http://localhost:8083"
-	$(MAKE) kafka-topic
-
 stack-down:
 	$(COMPOSE) down -v
 
-infra-up:
+stack-up:
 	$(COMPOSE) up -d kafka prometheus
 	@echo "Kafka available at localhost:19092 (PLAINTEXT) and Prometheus at http://localhost:9090"
 	$(MAKE) kafka-topic
-
-infra-down:
-	$(COMPOSE) stop kafka prometheus
 
 kafka-topic:
 	@echo "Ensuring 'logs' topic exists"

@@ -33,6 +33,18 @@ var (
 		Name: "ingestion_work_queue_depth",
 		Help: "Number of batches waiting to be produced to Kafka.",
 	})
+	kafkaUp = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "kafka_up",
+		Help: "Whether Kafka is reachable by the application (1=up, 0=down).",
+	})
+	kafkaConsumerErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "kafka_consumer_errors_total",
+		Help: "Total number of Kafka consumer fetch/connect errors.",
+	})
+	kafkaWriterErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "kafka_writer_errors_total",
+		Help: "Total number of Kafka writer internal errors.",
+	})
 
 	collectorsOnce sync.Once
 )
@@ -89,4 +101,23 @@ func SetIngestionQueueDepth(n int) {
 		n = 0
 	}
 	ingestionQueueDepth.Set(float64(n))
+}
+
+// SetKafkaUp records whether Kafka is currently reachable.
+func SetKafkaUp(up bool) {
+	if up {
+		kafkaUp.Set(1)
+		return
+	}
+	kafkaUp.Set(0)
+}
+
+// IncKafkaConsumerErrors increments Kafka consumer error counter.
+func IncKafkaConsumerErrors() {
+	kafkaConsumerErrors.Inc()
+}
+
+// IncKafkaWriterErrors increments Kafka writer error counter.
+func IncKafkaWriterErrors() {
+	kafkaWriterErrors.Inc()
 }

@@ -142,6 +142,36 @@ func TestKafkaLogQueue_Behavior(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "connectivity nil receiver",
+			run: func(t *testing.T) {
+				var q *KafkaLogQueue
+				if err := q.CheckConnectivity(context.Background()); err == nil {
+					t.Fatal("expected error for nil queue")
+				}
+			},
+		},
+		{
+			name: "connectivity without brokers",
+			run: func(t *testing.T) {
+				q := &KafkaLogQueue{}
+				if err := q.CheckConnectivity(context.Background()); err == nil {
+					t.Fatal("expected error when brokers are not configured")
+				}
+			},
+		},
+		{
+			name: "connectivity canceled context",
+			run: func(t *testing.T) {
+				q := &KafkaLogQueue{}
+				q.readerCfg.Brokers = []string{"localhost:9092"}
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				if err := q.CheckConnectivity(ctx); err == nil {
+					t.Fatal("expected context canceled error")
+				}
+			},
+		},
 	}
 
 	for _, tc := range cases {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -133,6 +134,59 @@ func TestProducerService(t *testing.T) {
 				}
 				if !found {
 					t.Fatalf("expected producer DLQ file to be written")
+				}
+			},
+		},
+		{
+			name: "circuit breaker opens after repeated sync failures",
+			run: func(t *testing.T) {
+				q := &mockQueue{err: context.DeadlineExceeded}
+				cfg := &ProducerConfig{
+					QueueBufferSize:         1,
+					Workers:                 1,
+					WriteTimeout:            2 * time.Millisecond,
+					MaxRetries:              0,
+					CircuitFailureThreshold: 1,
+					CircuitCooldown:         50 * time.Millisecond,
+				}
+				producer := NewProducerService(q, loggerpkg.NewNop(), cfg)
+				t.Cleanup(producer.Close)
+				producer.Start()
+
+				records := []model.LogRecord{{
+					Timestamp: time.Now().UTC(),
+					Path:      "/fail",
+					UserAgent: "ua",
+				}}
+
+				if err := producer.EnqueueSync(context.Background(), records); err == nil {
+					t.Fatal("expected initial sync enqueue to fail")
+				}
+				q.mu.Lock()
+				callsAfterFirst := q.callCnt
+				q.mu.Unlock()
+				if callsAfterFirst == 0 {
+					t.Fatal("expected queue to be called at least once")
+				}
+
+				err := producer.EnqueueSync(context.Background(), records)
+				if !errors.Is(err, ErrProducerCircuitOpen) {
+					t.Fatalf("expected ErrProducerCircuitOpen, got %v", err)
+				}
+				q.mu.Lock()
+				callsAfterSecond := q.callCnt
+				q.mu.Unlock()
+				if callsAfterSecond != callsAfterFirst {
+					t.Fatalf("expected no additional queue calls while circuit open: before=%d after=%d", callsAfterFirst, callsAfterSecond)
+				}
+
+				time.Sleep(60 * time.Millisecond)
+				q.mu.Lock()
+				q.err = nil
+				q.mu.Unlock()
+
+				if err := producer.EnqueueSync(context.Background(), records); err != nil {
+					t.Fatalf("expected sync enqueue to recover after cooldown, got %v", err)
 				}
 			},
 		},

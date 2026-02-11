@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lechuhuuha/log_forge/internal/metrics"
@@ -17,14 +18,20 @@ import (
 	"github.com/lechuhuuha/log_forge/service"
 )
 
-const maxRequestBodyBytes = 2 << 20 // 2 MiB
+const (
+	maxRequestBodyBytes   = 2 << 20 // 2 MiB
+	defaultRequestTimeout = 5 * time.Second
+	transientLogInterval  = 5 * time.Second
+)
 
 var errUnsupportedContentType = errors.New("unsupported content-type")
 
 // Handler wires HTTP endpoints to services.
 type Handler struct {
-	ingestion *service.IngestionService
-	logger    loggerpkg.Logger
+	ingestion          *service.IngestionService
+	logger             loggerpkg.Logger
+	requestTimeout     time.Duration
+	lastTransientLogNs atomic.Int64
 }
 
 // NewHandler builds the HTTP handler set.
@@ -32,7 +39,22 @@ func NewHandler(ingestion *service.IngestionService, logr loggerpkg.Logger) *Han
 	if logr == nil {
 		logr = loggerpkg.NewNop()
 	}
-	return &Handler{ingestion: ingestion, logger: logr}
+	return &Handler{
+		ingestion:      ingestion,
+		logger:         logr,
+		requestTimeout: defaultRequestTimeout,
+	}
+}
+
+// WithRequestTimeout overrides the per-request processing timeout used for /logs.
+func (h *Handler) WithRequestTimeout(timeout time.Duration) *Handler {
+	if h == nil {
+		return h
+	}
+	if timeout > 0 {
+		h.requestTimeout = timeout
+	}
+	return h
 }
 
 // RegisterRoutes attaches the HTTP endpoints to the provided mux.
@@ -71,28 +93,54 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.ingestion.ProcessBatch(r.Context(), records); err != nil {
-		h.logger.Error("failed to process logs", loggerpkg.F("error", err))
+	ingestCtx := r.Context()
+	if h.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ingestCtx, cancel = context.WithTimeout(r.Context(), h.requestTimeout)
+		defer cancel()
+	}
+
+	if err := h.ingestion.ProcessBatch(ingestCtx, records); err != nil {
+		logTransient := false
 		switch {
 		case errors.Is(err, service.ErrQueueFull):
+			logTransient = true
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "queue full", http.StatusTooManyRequests)
 		case errors.Is(err, service.ErrProducerNotStarted),
 			errors.Is(err, service.ErrProducerStopped),
+			errors.Is(err, service.ErrProducerCircuitOpen),
 			errors.Is(err, service.ErrIngestionStopped),
 			errors.Is(err, service.ErrProducerNotConfigured),
 			errors.Is(err, service.ErrLogStoreNotConfigured),
 			errors.Is(err, context.DeadlineExceeded),
 			errors.Is(err, context.Canceled):
+			logTransient = true
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		default:
 			http.Error(w, "failed to process logs", http.StatusInternalServerError)
 		}
+		if logTransient {
+			h.logTransientProcessError(err)
+		} else {
+			h.logger.Error("failed to process logs", loggerpkg.F("error", err))
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) logTransientProcessError(err error) {
+	now := time.Now().UTC().UnixNano()
+	last := h.lastTransientLogNs.Load()
+	if now-last < int64(transientLogInterval) {
+		return
+	}
+	if h.lastTransientLogNs.CompareAndSwap(last, now) {
+		h.logger.Warn("transient /logs processing issue", loggerpkg.F("error", err))
+	}
 }
 
 func (h *Handler) decodeRecords(r *http.Request) ([]model.LogRecord, error) {

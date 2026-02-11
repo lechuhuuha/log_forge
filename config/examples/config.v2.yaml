@@ -1,6 +1,11 @@
 version: 2
 server:
   addr: ":8083"
+  readHeaderTimeout: 2s
+  readTimeout: 10s
+  writeTimeout: 10s
+  idleTimeout: 60s
+  requestTimeout: 5s
 storage:
   logsDir: "/data/v2/logs"
   analyticsDir: "/data/v2/analytics"
@@ -8,6 +13,8 @@ aggregation:
   interval: 30s
 ingestion:
   syncOnIngest: true
+  circuitFailureThreshold: 3
+  circuitCooldown: 15s
 kafka:
   brokers:
     - kafka:9092

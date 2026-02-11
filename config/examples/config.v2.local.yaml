@@ -1,6 +1,11 @@
 version: 2
 server:
   addr: ":8083"
+  readHeaderTimeout: 2s
+  readTimeout: 10s
+  writeTimeout: 10s
+  idleTimeout: 60s
+  requestTimeout: 5s
 storage:
   logsDir: "./logs"
   analyticsDir: "./analytics"
@@ -12,6 +17,8 @@ ingestion:
   producerWriteTimeout: 5s
   queueHighWaterPercent: 0.98
   syncOnIngest: true
+  circuitFailureThreshold: 3
+  circuitCooldown: 15s
 consumer:
   flushSize: 4096
   flushInterval: 100ms
