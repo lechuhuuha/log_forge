@@ -17,6 +17,10 @@ import (
 	"github.com/lechuhuuha/log_forge/service"
 )
 
+const maxRequestBodyBytes = 2 << 20 // 2 MiB
+
+var errUnsupportedContentType = errors.New("unsupported content-type")
+
 // Handler wires HTTP endpoints to services.
 type Handler struct {
 	ingestion *service.IngestionService
@@ -38,15 +42,32 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	if h.ingestion == nil {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	defer r.Body.Close()
 
 	records, err := h.decodeRecords(r)
 	if err != nil {
 		metrics.IncInvalidRequests()
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		var maxBytesErr *http.MaxBytesError
+		switch {
+		case errors.Is(err, errUnsupportedContentType):
+			http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
+		case errors.As(err, &maxBytesErr):
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -58,6 +79,9 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "queue full", http.StatusTooManyRequests)
 		case errors.Is(err, service.ErrProducerNotStarted),
 			errors.Is(err, service.ErrProducerStopped),
+			errors.Is(err, service.ErrIngestionStopped),
+			errors.Is(err, service.ErrProducerNotConfigured),
+			errors.Is(err, service.ErrLogStoreNotConfigured),
 			errors.Is(err, context.DeadlineExceeded),
 			errors.Is(err, context.Canceled):
 			w.Header().Set("Retry-After", "1")
@@ -79,7 +103,7 @@ func (h *Handler) decodeRecords(r *http.Request) ([]model.LogRecord, error) {
 	case strings.Contains(contentType, "text/csv"):
 		return h.decodeCSV(r.Body)
 	default:
-		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
+		return nil, fmt.Errorf("%w: %s", errUnsupportedContentType, contentType)
 	}
 }
 
@@ -88,6 +112,10 @@ func (h *Handler) decodeJSON(body io.Reader) ([]model.LogRecord, error) {
 	var records []model.LogRecord
 	if err := decoder.Decode(&records); err != nil {
 		return nil, fmt.Errorf("invalid JSON payload: %w", err)
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, errors.New("invalid JSON payload: unexpected trailing data")
 	}
 	return h.validate(records)
 }

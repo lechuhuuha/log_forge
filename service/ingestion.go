@@ -24,6 +24,10 @@ const (
 var (
 	// ErrIngestionStopped indicates the ingestion service is no longer accepting work.
 	ErrIngestionStopped = errors.New("ingestion service stopped")
+	// ErrProducerNotConfigured indicates queue mode is enabled without a producer.
+	ErrProducerNotConfigured = errors.New("producer not configured")
+	// ErrLogStoreNotConfigured indicates direct mode is enabled without a repository.
+	ErrLogStoreNotConfigured = errors.New("log store not configured")
 )
 
 // IngestionService orchestrates log ingestion across versions.
@@ -68,7 +72,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.Log
 			return ErrIngestionStopped
 		}
 		if s.producer == nil {
-			return errors.New("producer not configured")
+			return ErrProducerNotConfigured
 		}
 		if s.syncOnIngest {
 			if err := s.producer.EnqueueSync(ctx, records); err != nil {
@@ -87,7 +91,7 @@ func (s *IngestionService) ProcessBatch(ctx context.Context, records []model.Log
 		fallthrough
 	default:
 		if s.repo == nil {
-			return errors.New("log store not configured")
+			return ErrLogStoreNotConfigured
 		}
 		if err := s.repo.SaveBatch(ctx, records); err != nil {
 			metrics.IncIngestErrors()

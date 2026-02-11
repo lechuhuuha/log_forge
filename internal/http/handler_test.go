@@ -39,6 +39,8 @@ func newHandlerWithStore(store repo.Repository) *Handler {
 }
 
 func TestHandleLogs(t *testing.T) {
+	largeBody := `[{"timestamp":"2023-01-02T03:04:05Z","path":"` + strings.Repeat("a", maxRequestBodyBytes) + `","userAgent":"ua"}]`
+
 	type expect struct {
 		status          int
 		batches         int
@@ -110,6 +112,36 @@ func TestHandleLogs(t *testing.T) {
 			body:        `[{"timestamp":"2023-01-02T03:04:05Z","path":"","userAgent":"ua"}]`,
 			expect: expect{
 				status:       http.StatusBadRequest,
+				batches:      0,
+				invalidDelta: 1,
+			},
+		},
+		{
+			name:        "unsupported content type maps to 415",
+			contentType: "application/xml",
+			body:        "<logs></logs>",
+			expect: expect{
+				status:       http.StatusUnsupportedMediaType,
+				batches:      0,
+				invalidDelta: 1,
+			},
+		},
+		{
+			name:        "json trailing payload returns bad request",
+			contentType: "application/json",
+			body:        `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]{"extra":true}`,
+			expect: expect{
+				status:       http.StatusBadRequest,
+				batches:      0,
+				invalidDelta: 1,
+			},
+		},
+		{
+			name:        "payload too large maps to 413",
+			contentType: "application/json",
+			body:        largeBody,
+			expect: expect{
+				status:       http.StatusRequestEntityTooLarge,
 				batches:      0,
 				invalidDelta: 1,
 			},
@@ -193,34 +225,46 @@ func (p errProducer) EnqueueSync(ctx context.Context, records []model.LogRecord)
 
 func TestHandleLogsQueueErrors(t *testing.T) {
 	cases := []struct {
-		name       string
+		name        string
 		producerErr error
-		wantStatus int
-		wantRetry  bool
+		wantStatus  int
+		wantRetry   bool
 	}{
 		{
-			name:       "queue full maps to 429",
+			name:        "queue full maps to 429",
 			producerErr: service.ErrQueueFull,
-			wantStatus: http.StatusTooManyRequests,
-			wantRetry:  true,
+			wantStatus:  http.StatusTooManyRequests,
+			wantRetry:   true,
 		},
 		{
-			name:       "producer stopped maps to 503",
+			name:        "producer stopped maps to 503",
 			producerErr: service.ErrProducerStopped,
-			wantStatus: http.StatusServiceUnavailable,
-			wantRetry:  true,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
 		},
 		{
-			name:       "deadline exceeded maps to 503",
+			name:        "deadline exceeded maps to 503",
 			producerErr: context.DeadlineExceeded,
-			wantStatus: http.StatusServiceUnavailable,
-			wantRetry:  true,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
 		},
 		{
-			name:       "producer not started maps to 503",
+			name:        "producer not started maps to 503",
 			producerErr: service.ErrProducerNotStarted,
-			wantStatus: http.StatusServiceUnavailable,
-			wantRetry:  true,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
+		},
+		{
+			name:        "ingestion stopped maps to 503",
+			producerErr: service.ErrIngestionStopped,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
+		},
+		{
+			name:        "producer not configured maps to 503",
+			producerErr: service.ErrProducerNotConfigured,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantRetry:   true,
 		},
 	}
 
@@ -239,6 +283,80 @@ func TestHandleLogsQueueErrors(t *testing.T) {
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+			if tc.wantRetry {
+				if got := rec.Header().Get("Retry-After"); got == "" {
+					t.Fatalf("expected Retry-After header to be set")
+				}
+			}
+		})
+	}
+}
+
+func TestHandleLogsDirectModeMisconfigAndMethod(t *testing.T) {
+	cases := []struct {
+		name      string
+		req       func() *http.Request
+		setup     func() *Handler
+		wantCode  int
+		wantAllow bool
+		wantRetry bool
+	}{
+		{
+			name: "method not allowed sets allow header",
+			req: func() *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/logs", nil)
+			},
+			setup: func() *Handler {
+				return newHandlerWithStore(&mockStore{})
+			},
+			wantCode:  http.StatusMethodNotAllowed,
+			wantAllow: true,
+		},
+		{
+			name: "nil ingestion returns service unavailable",
+			req: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewBufferString(`[]`))
+				req.Header.Set("Content-Type", "application/json")
+				return req
+			},
+			setup: func() *Handler {
+				return NewHandler(nil, nil)
+			},
+			wantCode:  http.StatusServiceUnavailable,
+			wantRetry: true,
+		},
+		{
+			name: "direct mode missing repo maps to 503",
+			req: func() *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewBufferString(`[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`))
+				req.Header.Set("Content-Type", "application/json")
+				return req
+			},
+			setup: func() *Handler {
+				ingestion := service.NewIngestionService(nil, nil, service.ModeDirect, false, nil)
+				return NewHandler(ingestion, nil)
+			},
+			wantCode:  http.StatusServiceUnavailable,
+			wantRetry: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			handler := tc.setup()
+			rec := httptest.NewRecorder()
+
+			handler.handleLogs(rec, tc.req())
+
+			if rec.Code != tc.wantCode {
+				t.Fatalf("expected status %d, got %d", tc.wantCode, rec.Code)
+			}
+			if tc.wantAllow {
+				if got := rec.Header().Get("Allow"); got != http.MethodPost {
+					t.Fatalf("expected Allow=%s, got %q", http.MethodPost, got)
+				}
 			}
 			if tc.wantRetry {
 				if got := rec.Header().Get("Retry-After"); got == "" {

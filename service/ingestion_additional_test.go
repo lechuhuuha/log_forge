@@ -45,7 +45,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 				return NewIngestionService(nil, nil, ModeDirect, false, nil)
 			},
 			records: records,
-			wantErr: errors.New("log store not configured"),
+			wantErr: ErrLogStoreNotConfigured,
 		},
 		{
 			name: "queue mode missing producer",
@@ -53,7 +53,7 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 				return NewIngestionService(nil, nil, ModeQueue, false, nil)
 			},
 			records: records,
-			wantErr: errors.New("producer not configured"),
+			wantErr: ErrProducerNotConfigured,
 		},
 		{
 			name: "empty batch is noop",
@@ -79,9 +79,9 @@ func TestIngestionServiceAdditionalPaths(t *testing.T) {
 				}
 				return
 			}
-			if tc.wantErr == ErrIngestionStopped {
+			if errors.Is(tc.wantErr, ErrIngestionStopped) || errors.Is(tc.wantErr, ErrLogStoreNotConfigured) || errors.Is(tc.wantErr, ErrProducerNotConfigured) {
 				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("expected ErrIngestionStopped, got %v", err)
+					t.Fatalf("expected %v, got %v", tc.wantErr, err)
 				}
 				return
 			}
