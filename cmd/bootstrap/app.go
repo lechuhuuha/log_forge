@@ -21,19 +21,32 @@ import (
 
 // AppConfig holds the runtime options required to start the application.
 type AppConfig struct {
-	Addr                string
-	ReadHeaderTimeout   time.Duration
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	IdleTimeout         time.Duration
-	RequestTimeout      time.Duration
-	Version             int
-	LogsDir             string
-	AnalyticsDir        string
+	// Addr is the HTTP listen address (for example, ":8082").
+	Addr string
+	// ReadHeaderTimeout limits how long the server reads request headers.
+	ReadHeaderTimeout time.Duration
+	// ReadTimeout limits the total time to read the entire request.
+	ReadTimeout time.Duration
+	// WriteTimeout limits the time to write a response.
+	WriteTimeout time.Duration
+	// IdleTimeout limits how long keep-alive connections stay idle.
+	IdleTimeout time.Duration
+	// RequestTimeout is the per-request processing timeout for /logs.
+	RequestTimeout time.Duration
+	// Version selects the pipeline mode (1=direct file write, 2=Kafka-backed).
+	Version int
+	// LogsDir is the base directory for raw hourly log files.
+	LogsDir string
+	// AnalyticsDir is the base directory for aggregated summary files.
+	AnalyticsDir string
+	// AggregationInterval controls how often background aggregation runs.
 	AggregationInterval time.Duration
-	KafkaSettings       *config.KafkaSettings
-	Ingestion           config.IngestionSettings
-	Consumer            config.ConsumerSettings
+	// KafkaSettings contains Kafka producer/consumer configuration for v2 mode.
+	KafkaSettings *config.KafkaSettings
+	// Ingestion contains producer-side buffering/retry/circuit configuration.
+	Ingestion config.IngestionSettings
+	// Consumer contains consumer-side flush and persistence settings.
+	Consumer config.ConsumerSettings
 }
 
 // App wires together the HTTP server, services, and background workers.

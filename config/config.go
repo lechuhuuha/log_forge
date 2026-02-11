@@ -12,6 +12,7 @@ import (
 
 // CLIConfig captures CLI-provided options for starting the server.
 type CLIConfig struct {
+	// ConfigPath points to the YAML configuration file used at startup.
 	ConfigPath string
 }
 
@@ -28,66 +29,102 @@ func ParseFlags() CLIConfig {
 
 // Config models the YAML configuration file.
 type Config struct {
-	Version     int               `yaml:"version"`
-	Server      ServerConfig      `yaml:"server"`
-	Storage     StorageConfig     `yaml:"storage"`
+	// Version selects pipeline behavior (1=direct write, 2=Kafka-backed).
+	Version int `yaml:"version"`
+	// Server groups HTTP server and timeout settings.
+	Server ServerConfig `yaml:"server"`
+	// Storage configures on-disk destinations for raw logs and analytics summaries.
+	Storage StorageConfig `yaml:"storage"`
+	// Aggregation controls periodic analytics generation.
 	Aggregation AggregationConfig `yaml:"aggregation"`
-	Ingestion   IngestionSettings `yaml:"ingestion"`
-	Consumer    ConsumerSettings  `yaml:"consumer"`
-	Kafka       KafkaSettings     `yaml:"kafka"`
+	// Ingestion controls producer-side buffering/retry/circuit behavior.
+	Ingestion IngestionSettings `yaml:"ingestion"`
+	// Consumer controls consumer-side flush/persist behavior.
+	Consumer ConsumerSettings `yaml:"consumer"`
+	// Kafka configures broker/topic and Kafka client behavior.
+	Kafka KafkaSettings `yaml:"kafka"`
 }
 
 // ServerConfig contains HTTP server settings.
 type ServerConfig struct {
-	Addr              string        `yaml:"addr"`
+	// Addr is the HTTP bind address (for example, ":8082").
+	Addr string `yaml:"addr"`
+	// ReadHeaderTimeout limits time to read request headers.
 	ReadHeaderTimeout time.Duration `yaml:"readHeaderTimeout"`
-	ReadTimeout       time.Duration `yaml:"readTimeout"`
-	WriteTimeout      time.Duration `yaml:"writeTimeout"`
-	IdleTimeout       time.Duration `yaml:"idleTimeout"`
-	RequestTimeout    time.Duration `yaml:"requestTimeout"`
+	// ReadTimeout limits total time to read a request.
+	ReadTimeout time.Duration `yaml:"readTimeout"`
+	// WriteTimeout limits total time to write a response.
+	WriteTimeout time.Duration `yaml:"writeTimeout"`
+	// IdleTimeout limits keep-alive idle time.
+	IdleTimeout time.Duration `yaml:"idleTimeout"`
+	// RequestTimeout is the application-level timeout used for /logs processing.
+	RequestTimeout time.Duration `yaml:"requestTimeout"`
 }
 
 // StorageConfig configures directories for raw logs and analytics output.
 type StorageConfig struct {
-	LogsDir      string `yaml:"logsDir"`
+	// LogsDir is the base directory for NDJSON log files.
+	LogsDir string `yaml:"logsDir"`
+	// AnalyticsDir is the base directory for aggregated summary files.
 	AnalyticsDir string `yaml:"analyticsDir"`
 }
 
 // AggregationConfig defines the periodic aggregation interval.
 type AggregationConfig struct {
+	// Interval defines how often aggregation runs (for example, "30s").
 	Interval string `yaml:"interval"`
 }
 
 // IngestionSettings tunes producer-side buffering before Kafka.
 type IngestionSettings struct {
-	QueueBufferSize         int           `yaml:"queueBufferSize"`
-	ProducerWorkers         int           `yaml:"producerWorkers"`
-	ProducerWriteTimeout    time.Duration `yaml:"producerWriteTimeout"`
-	QueueHighWaterPercent   float64       `yaml:"queueHighWaterPercent"`
-	SyncOnIngest            bool          `yaml:"syncOnIngest"`
-	CircuitFailureThreshold int           `yaml:"circuitFailureThreshold"`
-	CircuitCooldown         time.Duration `yaml:"circuitCooldown"`
+	// QueueBufferSize is the number of batches buffered before producers.
+	QueueBufferSize int `yaml:"queueBufferSize"`
+	// ProducerWorkers is the number of producer goroutines.
+	ProducerWorkers int `yaml:"producerWorkers"`
+	// ProducerWriteTimeout limits a single Kafka write attempt.
+	ProducerWriteTimeout time.Duration `yaml:"producerWriteTimeout"`
+	// QueueHighWaterPercent triggers warning logs near queue saturation.
+	QueueHighWaterPercent float64 `yaml:"queueHighWaterPercent"`
+	// SyncOnIngest forces /logs requests to wait for Kafka write outcome.
+	SyncOnIngest bool `yaml:"syncOnIngest"`
+	// CircuitFailureThreshold is consecutive failures needed to open the circuit.
+	CircuitFailureThreshold int `yaml:"circuitFailureThreshold"`
+	// CircuitCooldown is how long the circuit remains open before retrying.
+	CircuitCooldown time.Duration `yaml:"circuitCooldown"`
 }
 
 // ConsumerSettings configures consumer-side batching to disk.
 type ConsumerSettings struct {
-	FlushSize      int           `yaml:"flushSize"`
-	FlushInterval  time.Duration `yaml:"flushInterval"`
+	// FlushSize is the max number of consumed messages per persist batch.
+	FlushSize int `yaml:"flushSize"`
+	// FlushInterval is the max time to wait before forcing a flush.
+	FlushInterval time.Duration `yaml:"flushInterval"`
+	// PersistTimeout limits the write-to-storage operation per flush.
 	PersistTimeout time.Duration `yaml:"persistTimeout"`
 }
 
 // KafkaSettings captures Kafka queue configuration.
 type KafkaSettings struct {
-	Brokers        []string      `yaml:"brokers"`
-	Topic          string        `yaml:"topic"`
-	GroupID        string        `yaml:"groupID"`
-	BatchSize      int           `yaml:"batchSize"`
-	BatchTimeout   time.Duration `yaml:"batchTimeout"`
-	Consumers      int           `yaml:"consumers"`
-	RequireAllAcks bool          `yaml:"requireAllAcks"`
-	BatchBytes     int           `yaml:"batchBytes"`
-	Compression    string        `yaml:"compression"`
-	Async          bool          `yaml:"async"`
+	// Brokers is the broker bootstrap list.
+	Brokers []string `yaml:"brokers"`
+	// Topic is the topic used for log ingestion.
+	Topic string `yaml:"topic"`
+	// GroupID is the consumer group used by v2 workers.
+	GroupID string `yaml:"groupID"`
+	// BatchSize is the max number of messages per producer batch.
+	BatchSize int `yaml:"batchSize"`
+	// BatchTimeout is the max wait before flushing a producer batch.
+	BatchTimeout time.Duration `yaml:"batchTimeout"`
+	// Consumers is the number of consumer goroutines/readers to start.
+	Consumers int `yaml:"consumers"`
+	// RequireAllAcks controls producer acknowledgement strictness.
+	RequireAllAcks bool `yaml:"requireAllAcks"`
+	// BatchBytes caps producer batch size in bytes.
+	BatchBytes int `yaml:"batchBytes"`
+	// Compression selects Kafka message compression codec.
+	Compression string `yaml:"compression"`
+	// Async enables kafka-go async writer mode.
+	Async bool `yaml:"async"`
 }
 
 // Load parses a YAML configuration file from disk.
