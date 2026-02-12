@@ -207,6 +207,7 @@ func (p *ProducerService) Enqueue(ctx context.Context, batch []model.LogRecord) 
 }
 
 // EnqueueSync publishes a batch directly to the queue with retry logic.
+// Can be call from other service to load data into queue.
 func (p *ProducerService) EnqueueSync(ctx context.Context, batch []model.LogRecord) error {
 	if len(batch) == 0 {
 		return nil
