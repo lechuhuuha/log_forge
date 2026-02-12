@@ -37,7 +37,7 @@ func TestProducerServiceAdditionalPaths(t *testing.T) {
 			name: "enqueue closed",
 			run: func() error {
 				p := NewProducerService(&mockQueue{}, nil, &ProducerConfig{QueueBufferSize: 1, Workers: 1})
-				p.Start()
+				p.StartAsync()
 				p.Close()
 				return p.Enqueue(context.Background(), record)
 			},
@@ -51,7 +51,7 @@ func TestProducerServiceAdditionalPaths(t *testing.T) {
 			name: "enqueue context canceled when buffer full",
 			run: func() error {
 				p := NewProducerService(&mockQueue{}, nil, &ProducerConfig{QueueBufferSize: 1, Workers: 1})
-				// Force a "started but blocked" state without launching workers.
+				// Mark async path as started without launching workers so the channel stays full.
 				p.started.Store(true)
 				p.workCh <- []model.LogRecord{{
 					Timestamp: time.Now().UTC(),
@@ -68,6 +68,19 @@ func TestProducerServiceAdditionalPaths(t *testing.T) {
 			assert: func(t *testing.T, err error) {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("expected context.Canceled, got %v", err)
+				}
+			},
+		},
+		{
+			name: "enqueue sync works without async start",
+			run: func() error {
+				p := NewProducerService(&mockQueue{}, nil, &ProducerConfig{QueueBufferSize: 1, Workers: 1})
+				defer p.Close()
+				return p.EnqueueSync(context.Background(), record)
+			},
+			assert: func(t *testing.T, err error) {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
 				}
 			},
 		},

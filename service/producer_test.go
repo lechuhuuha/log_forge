@@ -61,7 +61,7 @@ func TestProducerService(t *testing.T) {
 				cfg := &ProducerConfig{QueueBufferSize: 4, Workers: 1, WriteTimeout: 5 * time.Millisecond}
 				producer := NewProducerService(q, loggerpkg.NewNop(), cfg)
 				t.Cleanup(producer.Close)
-				producer.Start()
+				producer.StartAsync()
 
 				if err := producer.Enqueue(context.Background(), records); err != nil {
 					t.Fatalf("Enqueue returned error: %v", err)
@@ -96,7 +96,7 @@ func TestProducerService(t *testing.T) {
 				}
 				producer := NewProducerService(q, loggerpkg.NewNop(), cfg)
 				t.Cleanup(producer.Close)
-				producer.Start()
+				producer.StartAsync()
 
 				records := []model.LogRecord{{
 					Timestamp: time.Now(),
@@ -151,7 +151,7 @@ func TestProducerService(t *testing.T) {
 				}
 				producer := NewProducerService(q, loggerpkg.NewNop(), cfg)
 				t.Cleanup(producer.Close)
-				producer.Start()
+				producer.StartAsync()
 
 				records := []model.LogRecord{{
 					Timestamp: time.Now().UTC(),

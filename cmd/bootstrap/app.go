@@ -169,7 +169,9 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			CircuitCooldown:         a.cfg.Ingestion.CircuitCooldown,
 		}
 		producerSvc = service.NewProducerService(logQueue, a.logger, producerCfg)
-		producerSvc.Start()
+		if !a.cfg.Ingestion.SyncOnIngest {
+			producerSvc.StartAsync()
+		}
 		cleanups = append(cleanups, func() { producerSvc.Close() })
 	}
 

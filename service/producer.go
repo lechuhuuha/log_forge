@@ -53,7 +53,7 @@ const (
 var (
 	// ErrProducerStopped indicates the producer is no longer accepting work.
 	ErrProducerStopped = errors.New("producer stopped")
-	// ErrProducerNotStarted indicates Start has not been invoked.
+	// ErrProducerNotStarted indicates async producer workers have not been started.
 	ErrProducerNotStarted = errors.New("producer not started")
 	// ErrQueueFull indicates the producer buffer is at capacity.
 	ErrQueueFull = errors.New("producer queue full")
@@ -157,8 +157,9 @@ func NewProducerService(queue model.LogQueue, logr loggerpkg.Logger, cfg *Produc
 	return svc
 }
 
-// Start launches producer workers. Safe to call multiple times.
-func (p *ProducerService) Start() {
+// StartAsync launches producer workers for asynchronous Enqueue usage.
+// Safe to call multiple times.
+func (p *ProducerService) StartAsync() {
 	p.startOnce.Do(func() {
 		for i := 0; i < p.workers; i++ {
 			p.wg.Add(1)
@@ -212,9 +213,6 @@ func (p *ProducerService) EnqueueSync(ctx context.Context, batch []model.LogReco
 	if len(batch) == 0 {
 		return nil
 	}
-	if !p.started.Load() {
-		return ErrProducerNotStarted
-	}
 	if p.closed.Load() {
 		return ErrProducerStopped
 	}
@@ -246,11 +244,10 @@ func (p *ProducerService) runProducer(workerID int) {
 	defer p.wg.Done()
 	for batch := range p.workCh {
 		metrics.SetIngestionQueueDepth(len(p.workCh))
-		ctx := p.ctx
-		if ctx == nil {
-			ctx = context.Background()
+		if p.ctx == nil {
+			p.ctx = context.Background()
 		}
-		if err := p.tryEnqueueWithRetry(ctx, batch, workerID); err != nil {
+		if err := p.tryEnqueueWithRetry(p.ctx, batch, workerID); err != nil {
 			p.writeProducerDLQ(batch, err)
 		}
 		metrics.SetIngestionQueueDepth(len(p.workCh))

@@ -130,7 +130,7 @@ func TestProducerServiceTransientFailureLogging(t *testing.T) {
 				CircuitCooldown:         time.Second,
 			})
 			t.Cleanup(producer.Close)
-			producer.Start()
+			producer.StartAsync()
 
 			for i := 0; i < tc.calls; i++ {
 				if tc.beforeCall != nil {

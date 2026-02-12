@@ -128,7 +128,7 @@ func BenchmarkIngestionProcessBatchQueue(b *testing.B) {
 				WriteTimeout:    time.Second,
 			}
 			producer := NewProducerService(queue, nil, prodCfg)
-			producer.Start()
+			producer.StartAsync()
 			b.Cleanup(producer.Close)
 			svc := NewIngestionService(nil, producer, ModeQueue, false, nil)
 
