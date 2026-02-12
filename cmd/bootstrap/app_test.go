@@ -189,16 +189,16 @@ func TestRun(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(t *testing.T)
-		ctx   func() context.Context
+		ctx   func() (context.Context, context.CancelFunc)
 		check func(t *testing.T)
 	}{
 		{
 			name:  "canceled context returns nil",
 			setup: func(_ *testing.T) {},
-			ctx: func() context.Context {
+			ctx: func() (context.Context, context.CancelFunc) {
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
-				return ctx
+				return ctx, cancel
 			},
 		},
 		{
@@ -210,10 +210,10 @@ func TestRun(t *testing.T) {
 				t.Setenv(util.ProfileName, "bootstrap_test")
 				t.Setenv("BOOTSTRAP_TEST_PROFILE_DIR", profileDir)
 			},
-			ctx: func() context.Context {
+			ctx: func() (context.Context, context.CancelFunc) {
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
-				return ctx
+				return ctx, cancel
 			},
 			check: func(t *testing.T) {
 				profileDir := os.Getenv("BOOTSTRAP_TEST_PROFILE_DIR")
@@ -231,15 +231,14 @@ func TestRun(t *testing.T) {
 		{
 			name:  "timeout context path",
 			setup: func(_ *testing.T) {},
-			ctx: func() context.Context {
-				ctx, _ := context.WithTimeout(context.Background(), 10*time.Millisecond)
-				return ctx
+			ctx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				return ctx, cancel
 			},
 		},
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cfgPath := writeConfigFile(t, 1, "1s", nil)
 			app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
@@ -248,7 +247,9 @@ func TestRun(t *testing.T) {
 			}
 
 			tc.setup(t)
-			if err := app.Run(tc.ctx()); err != nil {
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			if err := app.Run(ctx); err != nil {
 				t.Fatalf("Run returned error: %v", err)
 			}
 			if tc.check != nil {

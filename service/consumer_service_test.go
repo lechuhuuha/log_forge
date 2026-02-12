@@ -137,7 +137,7 @@ func TestConsumerWriter(t *testing.T) {
 			name: "defaults and noop paths",
 			run: func(t *testing.T) {
 				repo := &consumerRepoStub{}
-				writer := newConsumerWriter(nil, repo, ConsumerBatchConfig{}, nil)
+				writer := newConsumerWriter(context.TODO(), repo, ConsumerBatchConfig{}, nil)
 				if writer.flushSize != defaultConsumerFlushSize {
 					t.Fatalf("expected default flush size %d, got %d", defaultConsumerFlushSize, writer.flushSize)
 				}
