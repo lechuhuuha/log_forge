@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"github.com/lechuhuuha/log_forge/internal/metrics"
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 	"github.com/lechuhuuha/log_forge/model"
+	"github.com/lechuhuuha/log_forge/util"
 )
 
 // KafkaLogQueue implements LogQueue backed by Kafka.
@@ -39,6 +41,8 @@ type KafkaLogQueue struct {
 const (
 	kafkaDownLogInterval   = 5 * time.Second
 	kafkaWriterLogInterval = 30 * time.Second
+	kafkaRetryMinBackoff   = 250 * time.Millisecond
+	kafkaRetryMaxBackoff   = 5 * time.Second
 )
 
 // NewKafkaLogQueue builds a Kafka-backed queue implementation.
@@ -148,11 +152,8 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 	if q.consumers <= 0 {
 		q.consumers = 1
 	}
-	if q.readerCfg.CommitInterval == 0 {
-		// leave zero as explicit "no auto-commit"
-	} else {
-		q.readerCfg.CommitInterval = 0
-	}
+	// Use manual commit control via CommitMessages in the handler path.
+	q.readerCfg.CommitInterval = 0
 	for i := 0; i < q.consumers; i++ {
 		reader := kafka.NewReader(q.readerCfg)
 		q.logger.Info("starting kafka consumer",
@@ -173,18 +174,23 @@ func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handl
 
 	}()
 	var rec model.LogRecord
+	retryDelay := kafkaRetryMinBackoff
+	retryRand := rand.New(rand.NewSource(time.Now().UTC().UnixNano() + int64(idx)))
 
 	for {
 		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				return
 			}
 			q.markKafkaDown(err)
-			// brief pause before retrying to avoid tight loop
-			time.Sleep(500 * time.Millisecond)
+			if !util.WaitForRetry(ctx, util.JitterRetryDelay(retryDelay, retryRand)) {
+				return
+			}
+			retryDelay = util.NextRetryDelay(retryDelay, kafkaRetryMinBackoff, kafkaRetryMaxBackoff)
 			continue
 		}
+		retryDelay = kafkaRetryMinBackoff
 		q.markKafkaUp(msg.Partition, msg.Offset)
 		active := atomic.AddInt32(&q.activeConsumers, 1)
 		q.logger.Debug("kafka consumer processing message",
