@@ -10,3 +10,4 @@ profiles/
 .gocache/
 dlq/
 *.bkp
+interview.txt
