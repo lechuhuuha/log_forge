@@ -2,7 +2,7 @@
 
 A Go service that ingests batched web logs, persists them to hourly NDJSON files, produces hourly analytics, and exposes Prometheus metrics. Two deployment modes run in the same codebase:
 - **Version 1:** synchronous HTTP → file writes.
-- **Version 2:** HTTP → Kafka (async) → consumer workers → file storage.
+- **Version 2:** HTTP → producer → Kafka → consumer workers → file storage (`syncOnIngest` can be sync or async).
 
 ## Table of Contents
 - [Overview](#overview)
@@ -25,7 +25,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 
 ## Thought Process
 - Maintain a **clean separation of concerns** (domain interfaces, services, infrastructure) so that storage or queue implementations can change without touching business logic.
-- Keep **HTTP latency low** by keeping handlers thin (parse + validate + delegate). For Version 2, Kafka’s async writer keeps tail latency minimal.
+- Keep **HTTP latency low** by keeping handlers thin (parse + validate + delegate). For Version 2, ingest can trade request latency vs buffering using `syncOnIngest`.
 - Provide **observability hooks** from day one: Prometheus metrics, structured logs, and on-disk analytics artifacts.
 - Support **local + container workflows** so developers can test either in Docker or on bare metal while watching stdout logs.
 
@@ -64,7 +64,7 @@ A Go service that ingests batched web logs, persists them to hourly NDJSON files
 | Hourly NDJSON storage | ✅ | ✅ (consumer writes) |
 | Aggregation summaries | ✅ `analytics/YYYY-MM-DD/summary_<HH>.json` | ✅ same worker |
 | Prometheus metrics | ✅ `/metrics` | ✅ `/metrics` |
-| Kafka scalability | — | ✅ async writer + consumer group |
+| Kafka scalability | — | ✅ producer + consumer group (sync/async ingest options) |
 | Config via YAML | ✅ | ✅ |
 | Docker stack | ✅ | ✅ |
 | Makefile automation | ✅ | ✅ |
@@ -162,22 +162,43 @@ These commands invoke `go tool pprof` against the running pprof server (defaults
 ## System Architecture (Mermaid)
 ```mermaid
 flowchart TD
-    subgraph HTTP
-        POST[/POST /logs/] --> Parse
-        METRICS[/GET /metrics/] --> PromHTTP
-    end
+    Client((Client)) --> API[HTTP server<br/>cmd/bootstrap/app.go]
+    API --> Logs[/POST /logs/]
+    API --> Health[/GET /health/]
+    API --> Metrics[/GET /metrics/]
 
-    Parse --> Validate --> Mode
-    Mode -->|Version 1| Store
-    Mode -->|Version 2| KafkaWriter
+    Logs --> Decode[Decode + validate<br/>internal/http/handler.go]
+    Decode --> Ingestion[IngestionService<br/>service/ingestion.go]
 
-    KafkaWriter --> KafkaTopic[(Kafka logs topic)] --> KafkaConsumers
-    KafkaConsumers --> Store
+    Ingestion -->|Version 1| FileRepo[FileRepo SaveBatch<br/>repo/file_repo.go]
+    Ingestion -->|Version 2 + syncOnIngest=true| EnqueueSync[Producer EnqueueSync]
+    Ingestion -->|Version 2 + syncOnIngest=false| EnqueueAsync[Producer Enqueue]
 
-    Store --> Files[[logs/YYYY-MM-DD/HH.log.json]] --> Aggregator
+    EnqueueAsync --> WorkCh[(producer work channel)]
+    WorkCh --> Workers[Producer workers<br/>service/producer.go]
+    EnqueueSync --> KafkaWrite[KafkaLogQueue EnqueueBatch<br/>internal/queue/kafka_queue_producer.go]
+    Workers --> KafkaWrite
+    KafkaWrite --> Topic[(Kafka topic)]
+
+    Topic --> Readers[Kafka readers<br/>internal/queue/kafka_queue_consumer.go]
+    Readers --> Writer[consumerBatchWriter persist<br/>service/consumer.go]
+    Writer --> FileRepo
+    Writer --> Commit[Commit offset after persist]
+
+    FileRepo --> LogsFile[[logs/YYYY-MM-DD/HH.log.json]]
+    LogsFile --> Aggregator[AggregationService<br/>service/aggregation.go]
     Aggregator --> Analytics[[analytics/YYYY-MM-DD/summary_HH.json]]
 
-    PromHTTP --> Metrics[(Prometheus registry)]
+    subgraph Startup v2
+        Build[BuildApp] --> Check[Kafka CheckConnectivity]
+        Check --> Topic
+    end
+
+    subgraph Observability
+        Registry[(Prometheus registry)]
+        Prom((Prometheus)) --> Metrics
+        Metrics --> Registry
+    end
 ```
 
 ## Future Work
@@ -186,6 +207,6 @@ flowchart TD
 | API | `GET /analytics?hour=` endpoint | Serve summaries directly without touching disk |
 | Aggregation | Track file offsets / process multi-hour windows | Reduce re-reading & allow backfill |
 | Storage | Pluggable backends (S3, DB) | Swap in remote storage without changing ingestion code |
-| Queue | Retry / dead-letter handling | Currently drops after logging error |
+| Queue | DLQ replay tooling + idempotency strategy | Retries and DLQ writes exist; replay and dedupe workflow is still manual |
 | Metrics | Kafka lag gauges, histogram for `/logs` latency | Deeper observability |
 | Tests | Docker-based integration test for Kafka path | End-to-end verification in CI |
