@@ -20,12 +20,24 @@ import (
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
+type kafkaWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
+type kafkaReader interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 // KafkaLogQueue implements LogQueue backed by Kafka.
 type KafkaLogQueue struct {
-	writer    *kafka.Writer
-	readerCfg kafka.ReaderConfig
-	consumers int
-	logger    loggerpkg.Logger
+	writer        kafkaWriter
+	readerFactory func(kafka.ReaderConfig) kafkaReader
+	readerCfg     kafka.ReaderConfig
+	consumers     int
+	logger        loggerpkg.Logger
 	// activeConsumers tracks how many goroutines are processing a message.
 	activeConsumers int32
 	closeWriter     sync.Once
@@ -79,9 +91,10 @@ func NewKafkaLogQueue(cfg config.KafkaSettings, logr loggerpkg.Logger) (*KafkaLo
 	}
 
 	queue := &KafkaLogQueue{
-		readerCfg: readerCfg,
-		consumers: cfg.Consumers,
-		logger:    logr,
+		readerCfg:     readerCfg,
+		readerFactory: defaultKafkaReaderFactory,
+		consumers:     cfg.Consumers,
+		logger:        logr,
 	}
 
 	queue.writer = kafka.NewWriter(kafka.WriterConfig{
@@ -100,6 +113,10 @@ func NewKafkaLogQueue(cfg config.KafkaSettings, logr loggerpkg.Logger) (*KafkaLo
 	})
 
 	return queue, nil
+}
+
+func defaultKafkaReaderFactory(cfg kafka.ReaderConfig) kafkaReader {
+	return kafka.NewReader(cfg)
 }
 
 func compressionCodec(name string) kafka.CompressionCodec {

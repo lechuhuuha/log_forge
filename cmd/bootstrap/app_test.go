@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -126,6 +127,14 @@ func TestBuildApp(t *testing.T) {
 			errContains: "kafka settings are required for version 2",
 		},
 		{
+			name:        "version2 startup check fails when broker is unreachable",
+			version:     2,
+			interval:    "1s",
+			brokers:     []string{"127.0.0.1:1"},
+			wantErr:     true,
+			errContains: "kafka startup check",
+		},
+		{
 			name:      "nil context still builds",
 			version:   1,
 			interval:  "1s",
@@ -183,6 +192,53 @@ func TestBuildApp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildAppVersion2ReachableBroker(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start broker stub: %v", err)
+	}
+	defer listener.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	cfgPath := writeConfigFile(t, 2, "1s", []string{listener.Addr().String()})
+	app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("NewApp returned error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	server, cleanup, err := app.BuildApp(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("BuildApp returned error: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	server.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		cancel()
+		cleanup()
+		t.Fatalf("expected /health 200, got %d", rec.Code)
+	}
+
+	cancel()
+	cleanup()
+	_ = listener.Close()
+	<-done
 }
 
 func TestRun(t *testing.T) {

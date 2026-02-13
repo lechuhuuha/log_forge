@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	kafka "github.com/segmentio/kafka-go"
-
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 	"github.com/lechuhuuha/log_forge/model"
 	"github.com/lechuhuuha/log_forge/util"
@@ -20,13 +18,16 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 	if handler == nil {
 		return errors.New("handler required")
 	}
+	if q.readerFactory == nil {
+		q.readerFactory = defaultKafkaReaderFactory
+	}
 	if q.consumers <= 0 {
 		q.consumers = 1
 	}
 	// Use manual commit control via CommitMessages in the handler path.
 	q.readerCfg.CommitInterval = 0
 	for i := 0; i < q.consumers; i++ {
-		reader := kafka.NewReader(q.readerCfg)
+		reader := q.readerFactory(q.readerCfg)
 		q.logger.Info("starting kafka consumer",
 			loggerpkg.F("index", i+1),
 			loggerpkg.F("total", q.consumers),
@@ -38,7 +39,7 @@ func (q *KafkaLogQueue) StartConsumers(ctx context.Context, handler func(context
 	return nil
 }
 
-func (q *KafkaLogQueue) consume(ctx context.Context, reader *kafka.Reader, handler func(context.Context, model.ConsumedMessage), idx int) {
+func (q *KafkaLogQueue) consume(ctx context.Context, reader kafkaReader, handler func(context.Context, model.ConsumedMessage), idx int) {
 	defer func() {
 		reader.Close()
 		q.logger.Info("kafka consumer stopped", loggerpkg.F("index", idx))
