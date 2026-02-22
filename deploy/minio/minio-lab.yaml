@@ -47,11 +47,15 @@ spec:
           emptyDir: {}
       containers:
         - name: minio
-          image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
           imagePullPolicy: IfNotPresent
-          securityContext:
-            runAsUser: 1001
-            runAsGroup: 1001
+          command:
+            - /usr/bin/minio
+          args:
+            - server
+            - /data
+            - --console-address
+            - :9001
           ports:
             - name: api
               containerPort: 9000
@@ -68,16 +72,8 @@ spec:
                 secretKeyRef:
                   name: minio-root-creds
                   key: root-password
-            - name: MINIO_DEFAULT_BUCKETS
-              value: logs,analytics,logforge-staging,logforge-production
-            - name: MINIO_API_PORT_NUMBER
-              value: "9000"
-            - name: MINIO_CONSOLE_PORT_NUMBER
-              value: "9001"
             - name: HOME
               value: /tmp
-            - name: MC_CONFIG_DIR
-              value: /tmp/.mc
           livenessProbe:
             httpGet:
               path: /minio/health/live
@@ -99,9 +95,7 @@ spec:
               memory: 512Mi
           volumeMounts:
             - name: data
-              mountPath: /bitnami/minio/data
-            - name: tmp
-              mountPath: /opt/bitnami/minio/tmp
+              mountPath: /data
             - name: tmp
               mountPath: /tmp
   volumeClaimTemplates:
