@@ -20,6 +20,7 @@ func TestNewMinIORepo(t *testing.T) {
 		opts      MinIORepoOptions
 		wantErr   bool
 		errorText string
+		check     func(t *testing.T, repo *MinIORepo)
 	}{
 		{
 			name: "requires bucket",
@@ -47,13 +48,30 @@ func TestNewMinIORepo(t *testing.T) {
 				Bucket: "logs",
 				client: newFakeMinIOStore(),
 			},
+			check: func(t *testing.T, repo *MinIORepo) {
+				if repo.logsPrefix != "logs" {
+					t.Fatalf("expected default logs prefix logs, got %q", repo.logsPrefix)
+				}
+				if strings.TrimSpace(repo.writerID) == "" {
+					t.Fatal("expected non-empty generated writer id")
+				}
+			},
 		},
 		{
 			name: "trims custom logs prefix",
 			opts: MinIORepoOptions{
 				Bucket:     "logs",
 				LogsPrefix: " /custom-prefix/ ",
+				WriterID:   "pod-A",
 				client:     newFakeMinIOStore(),
+			},
+			check: func(t *testing.T, repo *MinIORepo) {
+				if repo.logsPrefix != "custom-prefix" {
+					t.Fatalf("expected trimmed logs prefix custom-prefix, got %q", repo.logsPrefix)
+				}
+				if !strings.HasPrefix(repo.writerID, "pod-A-") {
+					t.Fatalf("expected writer id to use provided base, got %q", repo.writerID)
+				}
 			},
 		},
 	}
@@ -74,135 +92,167 @@ func TestNewMinIORepo(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewMinIORepo returned error: %v", err)
 			}
-			if tc.opts.LogsPrefix == " /custom-prefix/ " && repo.logsPrefix != "custom-prefix" {
-				t.Fatalf("expected trimmed logs prefix custom-prefix, got %q", repo.logsPrefix)
-			}
-			if tc.opts.LogsPrefix == "" && repo.logsPrefix != "logs" {
-				t.Fatalf("expected default logs prefix logs, got %q", repo.logsPrefix)
+			if tc.check != nil {
+				tc.check(t, repo)
 			}
 		})
 	}
 }
 
-func TestMinIORepoSaveBatch(t *testing.T) {
+func TestMinIORepoSaveBatchGroupsByUTCHourShards(t *testing.T) {
+	store := newFakeMinIOStore()
+	r, err := NewMinIORepo(MinIORepoOptions{
+		Bucket:     "logs-bucket",
+		LogsPrefix: "logs",
+		WriterID:   "pod-a",
+		client:     store,
+	})
+	if err != nil {
+		t.Fatalf("NewMinIORepo returned error: %v", err)
+	}
+
+	err = r.SaveBatch(context.Background(), []model.LogRecord{
+		{
+			Timestamp: time.Date(2025, 1, 2, 10, 15, 0, 0, time.FixedZone("UTC+7", 7*3600)),
+			Path:      "/home",
+			UserAgent: "ua1",
+		},
+		{
+			Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
+			Path:      "/about",
+			UserAgent: "ua2",
+		},
+		{
+			Timestamp: time.Date(2025, 1, 2, 4, 45, 0, 0, time.UTC),
+			Path:      "/contact",
+			UserAgent: "ua3",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveBatch returned error: %v", err)
+	}
+
+	objects, err := r.ListLogObjects(context.Background())
+	if err != nil {
+		t.Fatalf("ListLogObjects returned error: %v", err)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("expected 2 sharded objects (one per hour in this batch), got %d", len(objects))
+	}
+
+	var (
+		hour03Object string
+		hour04Object string
+	)
+	for _, obj := range objects {
+		switch {
+		case strings.Contains(obj.Key, "logs/2025-01-02/03/"):
+			hour03Object = obj.Key
+		case strings.Contains(obj.Key, "logs/2025-01-02/04/"):
+			hour04Object = obj.Key
+		}
+	}
+	if hour03Object == "" {
+		t.Fatal("expected object key under logs/2025-01-02/03/")
+	}
+	if hour04Object == "" {
+		t.Fatal("expected object key under logs/2025-01-02/04/")
+	}
+
+	records03 := decodeStoredRecords(t, store, "logs-bucket", hour03Object)
+	records04 := decodeStoredRecords(t, store, "logs-bucket", hour04Object)
+	if len(records03) != 2 {
+		t.Fatalf("expected 2 records in hour 03 shard, got %d", len(records03))
+	}
+	if len(records04) != 1 {
+		t.Fatalf("expected 1 record in hour 04 shard, got %d", len(records04))
+	}
+	for _, rec := range append(records03, records04...) {
+		if rec.Timestamp.Location() != time.UTC {
+			t.Fatalf("expected UTC timestamp, got %v", rec.Timestamp.Location())
+		}
+	}
+}
+
+func TestMinIORepoSaveBatchAvoidsCrossWriterOverwrite(t *testing.T) {
+	store := newFakeMinIOStore()
+	repoA, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", LogsPrefix: "logs", WriterID: "pod-a", client: store})
+	if err != nil {
+		t.Fatalf("NewMinIORepo repoA returned error: %v", err)
+	}
+	repoB, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", LogsPrefix: "logs", WriterID: "pod-b", client: store})
+	if err != nil {
+		t.Fatalf("NewMinIORepo repoB returned error: %v", err)
+	}
+
+	batchA := []model.LogRecord{{
+		Timestamp: time.Date(2025, 1, 2, 3, 5, 0, 0, time.UTC),
+		Path:      "/from-a",
+		UserAgent: "ua-a",
+	}}
+	batchB := []model.LogRecord{{
+		Timestamp: time.Date(2025, 1, 2, 3, 6, 0, 0, time.UTC),
+		Path:      "/from-b",
+		UserAgent: "ua-b",
+	}}
+
+	if err := repoA.SaveBatch(context.Background(), batchA); err != nil {
+		t.Fatalf("repoA SaveBatch returned error: %v", err)
+	}
+	if err := repoB.SaveBatch(context.Background(), batchB); err != nil {
+		t.Fatalf("repoB SaveBatch returned error: %v", err)
+	}
+
+	objects, err := repoA.ListLogObjects(context.Background())
+	if err != nil {
+		t.Fatalf("ListLogObjects returned error: %v", err)
+	}
+
+	hourObjects := make([]string, 0)
+	for _, obj := range objects {
+		if strings.Contains(obj.Key, "logs/2025-01-02/03/") {
+			hourObjects = append(hourObjects, obj.Key)
+		}
+	}
+	if len(hourObjects) != 2 {
+		t.Fatalf("expected 2 independent shard objects for two writers, got %d (%v)", len(hourObjects), hourObjects)
+	}
+
+	paths := map[string]struct{}{}
+	for _, object := range hourObjects {
+		records := decodeStoredRecords(t, store, "logs-bucket", object)
+		for _, rec := range records {
+			paths[rec.Path] = struct{}{}
+		}
+	}
+	if _, ok := paths["/from-a"]; !ok {
+		t.Fatal("missing record written by writer A")
+	}
+	if _, ok := paths["/from-b"]; !ok {
+		t.Fatal("missing record written by writer B")
+	}
+}
+
+func TestMinIORepoSaveBatchContextAndNoOp(t *testing.T) {
 	cases := []struct {
 		name      string
 		setup     func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord)
 		assertion func(t *testing.T, store *fakeMinIOStore, err error)
 	}{
 		{
-			name: "groups records by utc date and hour object key",
-			setup: func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord) {
-				store.bucketExists = true
-				r, err := NewMinIORepo(MinIORepoOptions{
-					Bucket:     "logs-bucket",
-					LogsPrefix: "logs",
-					client:     store,
-				})
-				if err != nil {
-					t.Fatalf("NewMinIORepo returned error: %v", err)
-				}
-				return context.Background(), r, []model.LogRecord{
-					{
-						Timestamp: time.Date(2025, 1, 2, 10, 15, 0, 0, time.FixedZone("UTC+7", 7*3600)),
-						Path:      "/home",
-						UserAgent: "ua1",
-					},
-					{
-						Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
-						Path:      "/about",
-						UserAgent: "ua2",
-					},
-					{
-						Timestamp: time.Date(2025, 1, 2, 4, 45, 0, 0, time.UTC),
-						Path:      "/contact",
-						UserAgent: "ua3",
-					},
-				}
-			},
-			assertion: func(t *testing.T, store *fakeMinIOStore, err error) {
-				if err != nil {
-					t.Fatalf("SaveBatch returned error: %v", err)
-				}
-				records03 := decodeStoredRecords(t, store, "logs-bucket", "logs/2025-01-02/03.log.json")
-				records04 := decodeStoredRecords(t, store, "logs-bucket", "logs/2025-01-02/04.log.json")
-				if len(records03) != 2 {
-					t.Fatalf("expected 2 records in hour 03 object, got %d", len(records03))
-				}
-				if len(records04) != 1 {
-					t.Fatalf("expected 1 record in hour 04 object, got %d", len(records04))
-				}
-				for _, rec := range append(records03, records04...) {
-					if rec.Timestamp.Location() != time.UTC {
-						t.Fatalf("expected UTC timestamp, got %v", rec.Timestamp.Location())
-					}
-				}
-			},
-		},
-		{
-			name: "appends to existing object",
-			setup: func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord) {
-				existing := model.LogRecord{
-					Timestamp: time.Date(2025, 1, 2, 3, 0, 0, 0, time.UTC),
-					Path:      "/existing",
-					UserAgent: "ua-existing",
-				}
-				data, err := json.Marshal(existing)
-				if err != nil {
-					t.Fatalf("marshal existing record: %v", err)
-				}
-				store.putRaw("logs-bucket", "logs/2025-01-02/03.log.json", append(data, '\n'))
-
-				r, err := NewMinIORepo(MinIORepoOptions{
-					Bucket: "logs-bucket",
-					client: store,
-				})
-				if err != nil {
-					t.Fatalf("NewMinIORepo returned error: %v", err)
-				}
-				return context.Background(), r, []model.LogRecord{
-					{
-						Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
-						Path:      "/new",
-						UserAgent: "ua-new",
-					},
-				}
-			},
-			assertion: func(t *testing.T, store *fakeMinIOStore, err error) {
-				if err != nil {
-					t.Fatalf("SaveBatch returned error: %v", err)
-				}
-				records := decodeStoredRecords(t, store, "logs-bucket", "logs/2025-01-02/03.log.json")
-				if len(records) != 2 {
-					t.Fatalf("expected 2 records after append, got %d", len(records))
-				}
-				if records[0].Path != "/existing" {
-					t.Fatalf("expected first record to remain existing data, got %q", records[0].Path)
-				}
-				if records[1].Path != "/new" {
-					t.Fatalf("expected second record to be appended data, got %q", records[1].Path)
-				}
-			},
-		},
-		{
 			name: "cancelled context returns error",
 			setup: func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord) {
-				r, err := NewMinIORepo(MinIORepoOptions{
-					Bucket: "logs-bucket",
-					client: store,
-				})
+				r, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", client: store})
 				if err != nil {
 					t.Fatalf("NewMinIORepo returned error: %v", err)
 				}
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
-				return ctx, r, []model.LogRecord{
-					{
-						Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
-						Path:      "/new",
-						UserAgent: "ua-new",
-					},
-				}
+				return ctx, r, []model.LogRecord{{
+					Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
+					Path:      "/new",
+					UserAgent: "ua-new",
+				}}
 			},
 			assertion: func(t *testing.T, store *fakeMinIOStore, err error) {
 				if !errors.Is(err, context.Canceled) {
@@ -216,10 +266,7 @@ func TestMinIORepoSaveBatch(t *testing.T) {
 		{
 			name: "empty batch is no-op",
 			setup: func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord) {
-				r, err := NewMinIORepo(MinIORepoOptions{
-					Bucket: "logs-bucket",
-					client: store,
-				})
+				r, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", client: store})
 				if err != nil {
 					t.Fatalf("NewMinIORepo returned error: %v", err)
 				}
@@ -238,22 +285,17 @@ func TestMinIORepoSaveBatch(t *testing.T) {
 			name: "write honors context timeout",
 			setup: func(t *testing.T, store *fakeMinIOStore) (context.Context, *MinIORepo, []model.LogRecord) {
 				store.writeDelay = 40 * time.Millisecond
-				r, err := NewMinIORepo(MinIORepoOptions{
-					Bucket: "logs-bucket",
-					client: store,
-				})
+				r, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", client: store})
 				if err != nil {
 					t.Fatalf("NewMinIORepo returned error: %v", err)
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 				t.Cleanup(cancel)
-				return ctx, r, []model.LogRecord{
-					{
-						Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
-						Path:      "/new",
-						UserAgent: "ua-new",
-					},
-				}
+				return ctx, r, []model.LogRecord{{
+					Timestamp: time.Date(2025, 1, 2, 3, 30, 0, 0, time.UTC),
+					Path:      "/new",
+					UserAgent: "ua-new",
+				}}
 			},
 			assertion: func(t *testing.T, _ *fakeMinIOStore, err error) {
 				if !errors.Is(err, context.DeadlineExceeded) {
@@ -267,10 +309,41 @@ func TestMinIORepoSaveBatch(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			store := newFakeMinIOStore()
-			ctx, r, records := tc.setup(t, store)
-			err := r.SaveBatch(ctx, records)
+			ctx, repo, records := tc.setup(t, store)
+			err := repo.SaveBatch(ctx, records)
 			tc.assertion(t, store, err)
 		})
+	}
+}
+
+func TestMinIORepoListAndReadLogObjects(t *testing.T) {
+	store := newFakeMinIOStore()
+	store.putRaw("logs-bucket", "logs/2025-01-02/03/pod-a-1.log.json", []byte("{}\n"), time.Now().Add(-time.Minute))
+	store.putRaw("logs-bucket", "logs/2025-01-02/03/not-log.txt", []byte("ignored\n"), time.Now())
+	store.putRaw("logs-bucket", "logs/2025-01-02/03/pod-a-2.log.json", []byte("{}\n"), time.Now())
+
+	repo, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", client: store})
+	if err != nil {
+		t.Fatalf("NewMinIORepo returned error: %v", err)
+	}
+
+	objects, err := repo.ListLogObjects(context.Background())
+	if err != nil {
+		t.Fatalf("ListLogObjects returned error: %v", err)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("expected 2 .log.json objects, got %d", len(objects))
+	}
+	if objects[0].Key > objects[1].Key {
+		t.Fatalf("expected sorted object keys, got %q then %q", objects[0].Key, objects[1].Key)
+	}
+
+	payload, err := repo.ReadLogObject(context.Background(), "/"+objects[0].Key)
+	if err != nil {
+		t.Fatalf("ReadLogObject returned error: %v", err)
+	}
+	if strings.TrimSpace(string(payload)) != "{}" {
+		t.Fatalf("unexpected payload: %q", string(payload))
 	}
 }
 
@@ -310,15 +383,12 @@ func TestMinIORepoCheckReady(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newFakeMinIOStore()
 			tc.setup(store)
-			r, err := NewMinIORepo(MinIORepoOptions{
-				Bucket: "logs-bucket",
-				client: store,
-			})
+			repo, err := NewMinIORepo(MinIORepoOptions{Bucket: "logs-bucket", client: store})
 			if err != nil {
 				t.Fatalf("NewMinIORepo returned error: %v", err)
 			}
 
-			err = r.CheckReady(context.Background())
+			err = repo.CheckReady(context.Background())
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected readiness error")
@@ -335,12 +405,18 @@ func TestMinIORepoCheckReady(t *testing.T) {
 	}
 }
 
+type fakeStoredObject struct {
+	data         []byte
+	lastModified time.Time
+}
+
 type fakeMinIOStore struct {
 	mu sync.Mutex
 
-	objects  map[string][]byte
+	objects  map[string]fakeStoredObject
 	readErr  map[string]error
 	writeErr map[string]error
+	listErr  error
 
 	bucketExists bool
 	bucketErr    error
@@ -350,7 +426,7 @@ type fakeMinIOStore struct {
 
 func newFakeMinIOStore() *fakeMinIOStore {
 	return &fakeMinIOStore{
-		objects:  make(map[string][]byte),
+		objects:  make(map[string]fakeStoredObject),
 		readErr:  make(map[string]error),
 		writeErr: make(map[string]error),
 	}
@@ -373,11 +449,11 @@ func (s *fakeMinIOStore) ReadObject(ctx context.Context, bucket, object string) 
 	if err, ok := s.readErr[key]; ok {
 		return nil, err
 	}
-	data, ok := s.objects[key]
+	stored, ok := s.objects[key]
 	if !ok {
 		return nil, errObjectNotFound
 	}
-	copyData := append([]byte(nil), data...)
+	copyData := append([]byte(nil), stored.data...)
 	return copyData, nil
 }
 
@@ -401,15 +477,43 @@ func (s *fakeMinIOStore) WriteObject(ctx context.Context, bucket, object string,
 	if err, ok := s.writeErr[key]; ok {
 		return err
 	}
-	s.objects[key] = append([]byte(nil), payload...)
+	s.objects[key] = fakeStoredObject{data: append([]byte(nil), payload...), lastModified: time.Now().UTC()}
 	return nil
 }
 
-func (s *fakeMinIOStore) putRaw(bucket, object string, payload []byte) {
+func (s *fakeMinIOStore) ListObjects(ctx context.Context, bucket, prefix string) ([]MinIOObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+
+	bucketPrefix := bucket + "/"
+	fullPrefix := bucket + "/" + prefix
+	objects := make([]MinIOObjectInfo, 0)
+	for fullKey, stored := range s.objects {
+		if !strings.HasPrefix(fullKey, fullPrefix) {
+			continue
+		}
+		objects = append(objects, MinIOObjectInfo{
+			Key:          strings.TrimPrefix(fullKey, bucketPrefix),
+			LastModified: stored.lastModified,
+		})
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		return objects[i].Key < objects[j].Key
+	})
+	return objects, nil
+}
+
+func (s *fakeMinIOStore) putRaw(bucket, object string, payload []byte, modified time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := fmt.Sprintf("%s/%s", bucket, object)
-	s.objects[key] = append([]byte(nil), payload...)
+	s.objects[key] = fakeStoredObject{data: append([]byte(nil), payload...), lastModified: modified.UTC()}
 }
 
 func (s *fakeMinIOStore) writeCount() int {

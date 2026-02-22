@@ -198,6 +198,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 
 	var (
 		storeRepo      repo.Repository
+		minioStoreRepo *repo.MinIORepo
 		readyChecks    []func(context.Context) error
 		storageBackend = a.cfg.StorageBackend
 	)
@@ -222,6 +223,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 			return nil, runCleanups, fmt.Errorf("configure minio repo: %w", err)
 		}
 		storeRepo = minioRepo
+		minioStoreRepo = minioRepo
 		readyChecks = append(readyChecks, minioRepo.CheckReady)
 	default:
 		return nil, runCleanups, fmt.Errorf("unsupported storage backend %q", storageBackend)
@@ -284,8 +286,13 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		cleanups = append(cleanups, func() { producerSvc.Close() })
 	}
 
-	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
-	aggSvc.Start(ctx)
+	if minioStoreRepo != nil {
+		minioAggSvc := service.NewMinIOAggregationService(minioStoreRepo, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
+		minioAggSvc.Start(ctx)
+	} else {
+		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
+		aggSvc.Start(ctx)
+	}
 
 	ingestionSvc := service.NewIngestionService(storeRepo, producerSvc, mode, a.cfg.Ingestion.SyncOnIngest, a.logger)
 	cleanups = append(cleanups, func() { ingestionSvc.Close() })
