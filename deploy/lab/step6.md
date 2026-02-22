@@ -42,8 +42,16 @@ kubectl -n argocd describe application logforge-staging
 
 Ingress hostnames are enabled in env values for all three environments. Add local host mappings once:
 
+Linux/macOS (including WSL terminal access):
+
 ```bash
 echo "127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local" | sudo tee -a /etc/hosts
+```
+
+Windows browser access (when cluster runs in WSL): run PowerShell as Administrator:
+
+```powershell
+Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local"
 ```
 
 Then run staging checks:
@@ -61,6 +69,7 @@ bash deploy/lab/smoke-test.sh
 Notes:
 
 - k3d maps host port `8080` to ingress-nginx service port `80` via `deploy/k3d/config.yaml`.
+- If you use WSL + Windows browser, Windows needs its own hosts-file entry; `/etc/hosts` in WSL is not used by Windows apps.
 - If you cannot modify `/etc/hosts`, use host-header routing directly:
 
 ```bash
