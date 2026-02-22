@@ -19,14 +19,12 @@ services:
 
   minio-setup:
     image: minio/mc:RELEASE.2025-07-21T05-28-08Z
-    container_name: minio-setup
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
-    command: >
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb -p local/logforge || true
+    command:
+      - until mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null 2>&1; do sleep 1; done; mc mb -p local/logforge
     restart: "no"
 
   kafka:
@@ -88,7 +86,6 @@ services:
     depends_on:
       - kafka
       - minio
-      - minio-setup
     ports:
       - "8083:8083"
 
