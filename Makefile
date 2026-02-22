@@ -162,8 +162,8 @@ stack-down:
 	$(COMPOSE) down -v
 
 stack-up:
-	$(COMPOSE) up -d kafka prometheus
-	@echo "Kafka available at localhost:19092 (PLAINTEXT) and Prometheus at http://localhost:9090"
+	$(COMPOSE) up -d minio minio-setup kafka prometheus
+	@echo "Kafka available at localhost:19092 (PLAINTEXT), MinIO at http://localhost:9000 (console http://localhost:9001), and Prometheus at http://localhost:9090"
 	$(MAKE) kafka-topic
 
 kafka-topic:

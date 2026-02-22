@@ -11,14 +11,14 @@ auth:
   headerName: "X-API-Key"
   keys: []
 storage:
-  backend: file
+  backend: minio
   logsDir: "/data/v2/logs"
   analyticsDir: "/data/v2/analytics"
   minio:
-    endpoint: "minio.storage.svc.cluster.local:9000"
+    endpoint: "minio:9000"
     bucket: "logforge"
-    accessKey: ""
-    secretKey: ""
+    accessKey: "minioadmin"
+    secretKey: "minioadmin"
     useSSL: false
     logsPrefix: "logs"
     analyticsPrefix: "analytics"
