@@ -56,7 +56,7 @@ go vet ./...
 ## Step 1: Run Pinned Infra Bootstrap Files
 1. Execute Step 2 doc: `deploy/lab/step2.md`.
 2. Execute Step 3 doc: `deploy/lab/step3.md`.
-3. Before Step 4, replace `CHANGE_ME_MINIO_PASSWORD` in `deploy/minio/minio-lab.yaml`.
+3. Before Step 4, set a strong value for `stringData.root-password` in `deploy/minio/minio-lab.yaml`.
 4. Execute Step 4 doc: `deploy/lab/step4.md`.
 5. Validate cluster:
 ```bash
