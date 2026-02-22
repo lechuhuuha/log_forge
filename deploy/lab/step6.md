@@ -40,36 +40,44 @@ kubectl -n argocd describe application logforge-staging
 
 ## 3) Smoke test staging
 
-Use port-forward in one dedicated terminal:
+Ingress hostnames are enabled in env values for all three environments. Add local host mappings once:
 
 ```bash
-kubectl -n staging port-forward svc/logforge-staging 18082:8082
+echo "127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local" | sudo tee -a /etc/hosts
 ```
 
-In another terminal:
+Then run staging checks:
 
 ```bash
-curl -fsS http://127.0.0.1:18082/health
-curl -fsS http://127.0.0.1:18082/ready
-curl -fsS http://127.0.0.1:18082/version
+curl -fsS http://staging.logforge.local:8080/health
+curl -fsS http://staging.logforge.local:8080/ready
+curl -fsS http://staging.logforge.local:8080/version
 
-export LOGFORGE_BASE_URL="http://127.0.0.1:18082"
+export LOGFORGE_BASE_URL="http://staging.logforge.local:8080"
 export LOGFORGE_API_KEY="CHANGE_ME_STAGING_API_KEY"
 bash deploy/lab/smoke-test.sh
 ```
 
 Notes:
 
-- `http://127.0.0.1:18082` only works while the port-forward process is running.
-- If `18082` is busy, use another local port (for example `28082:8082`) and update `LOGFORGE_BASE_URL`.
+- k3d maps host port `8080` to ingress-nginx service port `80` via `deploy/k3d/config.yaml`.
+- If you cannot modify `/etc/hosts`, use host-header routing directly:
+
+```bash
+curl -fsS -H 'Host: staging.logforge.local' http://127.0.0.1:8080/health
+```
 
 Environment URLs:
 
+- Local ingress URLs:
+  - dev: `http://dev.logforge.local:8080`
+  - staging: `http://staging.logforge.local:8080`
+  - production: `http://production.logforge.local:8080`
 - In-cluster service DNS:
   - dev: `http://logforge-dev.dev.svc.cluster.local:8082`
   - staging: `http://logforge-staging.staging.svc.cluster.local:8082`
   - production: `http://logforge-production.production.svc.cluster.local:8082`
-- Local access (port-forward examples):
+- Port-forward fallback:
   - dev: `kubectl -n dev port-forward svc/logforge-dev 28081:8082` then open `http://127.0.0.1:28081`
   - staging: `kubectl -n staging port-forward svc/logforge-staging 28082:8082` then open `http://127.0.0.1:28082`
   - production: `kubectl -n production port-forward svc/logforge-production 28083:8082` then open `http://127.0.0.1:28083`

@@ -113,7 +113,7 @@ kubectl -n argocd get application logforge-dev logforge-staging
 ```
 
 ## Step 7: Smoke Test Staging
-1. Use port-forward workflow from `deploy/lab/step6.md`.
+1. Use ingress workflow from `deploy/lab/step6.md` (`http://staging.logforge.local:8080`).
 2. Verify:
 - `GET /health`
 - `GET /ready`
@@ -158,7 +158,7 @@ kubectl apply --dry-run=client -f deploy/argocd/logforge-production.yaml
 kubectl -n argocd get application logforge-dev logforge-staging logforge-production
 ```
 
-4. Endpoint checks (port-forward based):
+4. Endpoint checks (ingress based):
 - dev `/health`, `/ready`, `/version`
 - staging `/health`, `/ready`, `/version`
 
@@ -176,5 +176,5 @@ kubectl -n argocd get application logforge-dev logforge-staging logforge-product
 1. `dev` remains version 1 + file backend.
 2. `staging` and `production` remain version 2 + Kafka + MinIO.
 3. Staging/production parity excludes only env-specific identifiers and temporary promotion tag drift.
-4. Local endpoint access standard is `kubectl port-forward` unless ingress is explicitly introduced.
+4. Local endpoint access standard is ingress hostnames on port `8080`, with `kubectl port-forward` as fallback.
 5. `deploy/lab/versions.env` is the source of pinned infra versions.

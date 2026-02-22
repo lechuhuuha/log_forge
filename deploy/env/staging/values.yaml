@@ -6,6 +6,17 @@ image:
 imagePullSecrets:
   - name: ghcr-pull
 
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  hosts:
+    - host: staging.logforge.local
+      paths:
+        - path: /
+          pathType: Prefix
+
 secrets:
   create: false
   existingSecret: logforge-staging-runtime
