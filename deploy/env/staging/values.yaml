@@ -24,7 +24,7 @@ config:
     logsDir: /var/lib/logforge/logs
     analyticsDir: /var/lib/logforge/analytics
     minio:
-      endpoint: minio.minio.svc.cluster.local:9000
+      endpoint: minio.storage.svc.cluster.local:9000
       bucket: logforge-staging
       useSSL: false
       logsPrefix: logs
