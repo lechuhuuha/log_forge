@@ -178,9 +178,9 @@ func TestMinIOAggregationServiceStartWritesSummary(t *testing.T) {
 	)
 
 	analyticsDir := t.TempDir()
-	agg := NewMinIOAggregationService(store, analyticsDir, 10*time.Millisecond, nil)
+	// Use a long interval so only the immediate startup run is expected in this test.
+	agg := NewMinIOAggregationService(store, analyticsDir, time.Hour, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	agg.Start(ctx)
 
 	summaryPath := filepath.Join(analyticsDir, hour.Format(util.DateLayout), "summary_"+hour.Format(util.HourLayout)+".json")
@@ -194,6 +194,8 @@ func TestMinIOAggregationServiceStartWritesSummary(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	cancel()
+	time.Sleep(10 * time.Millisecond)
 }
 
 type summaryPayload struct {
