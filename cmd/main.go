@@ -12,6 +12,12 @@ import (
 	loggerpkg "github.com/lechuhuuha/log_forge/logger"
 )
 
+var (
+	Version   = "dev"
+	Commit    = "none"
+	BuildDate = "unknown"
+)
+
 func main() {
 	cfg := config.ParseFlags()
 
@@ -24,7 +30,11 @@ func main() {
 
 	bootstrap.InitObservability(logg)
 
-	application, err := bootstrap.NewApp(cfg, logg)
+	application, err := bootstrap.NewAppWithBuildInfo(cfg, logg, bootstrap.BuildInfo{
+		Version:   Version,
+		Commit:    Commit,
+		BuildDate: BuildDate,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build app: %v\n", err)
 		os.Exit(1)

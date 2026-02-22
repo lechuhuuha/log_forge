@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -50,6 +51,15 @@ func TestNewApp(t *testing.T) {
 				if app.cfg.Addr != ":8082" {
 					t.Fatalf("expected addr :8082, got %q", app.cfg.Addr)
 				}
+				if app.buildInfo.Version != "dev" {
+					t.Fatalf("expected default build version dev, got %q", app.buildInfo.Version)
+				}
+				if app.buildInfo.Commit != "none" {
+					t.Fatalf("expected default commit none, got %q", app.buildInfo.Commit)
+				}
+				if app.buildInfo.BuildDate != "unknown" {
+					t.Fatalf("expected default build date unknown, got %q", app.buildInfo.BuildDate)
+				}
 			},
 		},
 	}
@@ -77,6 +87,50 @@ func TestNewApp(t *testing.T) {
 	}
 }
 
+func TestNewAppWithBuildInfo(t *testing.T) {
+	cases := []struct {
+		name     string
+		build    BuildInfo
+		expected BuildInfo
+	}{
+		{
+			name:     "empty build info uses defaults",
+			build:    BuildInfo{},
+			expected: BuildInfo{Version: "dev", Commit: "none", BuildDate: "unknown"},
+		},
+		{
+			name: "custom build info is preserved",
+			build: BuildInfo{
+				Version:   "v0.1.0",
+				Commit:    "abcd1234",
+				BuildDate: "2026-02-22T00:00:00Z",
+			},
+			expected: BuildInfo{
+				Version:   "v0.1.0",
+				Commit:    "abcd1234",
+				BuildDate: "2026-02-22T00:00:00Z",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			app, err := NewAppWithBuildInfo(
+				config.CLIConfig{ConfigPath: writeConfigFile(t, 1, "1s", nil)},
+				nil,
+				tc.build,
+			)
+			if err != nil {
+				t.Fatalf("NewAppWithBuildInfo returned error: %v", err)
+			}
+			if app.buildInfo != tc.expected {
+				t.Fatalf("unexpected build info: got=%+v want=%+v", app.buildInfo, tc.expected)
+			}
+		})
+	}
+}
+
 func TestBuildApp(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -99,8 +153,33 @@ func TestBuildApp(t *testing.T) {
 					method string
 					path   string
 					want   int
+					check  func(t *testing.T, rec *httptest.ResponseRecorder)
 				}{
 					{name: "health", method: http.MethodGet, path: "/health", want: http.StatusOK},
+					{
+						name:   "version",
+						method: http.MethodGet,
+						path:   "/version",
+						want:   http.StatusOK,
+						check: func(t *testing.T, rec *httptest.ResponseRecorder) {
+							var body struct {
+								Version      string `json:"version"`
+								Commit       string `json:"commit"`
+								BuildDate    string `json:"buildDate"`
+								PipelineMode int    `json:"pipelineMode"`
+							}
+							if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+								t.Fatalf("decode /version response: %v", err)
+							}
+							if body.Version != "dev" || body.Commit != "none" || body.BuildDate != "unknown" {
+								t.Fatalf("unexpected /version metadata: %+v", body)
+							}
+							if body.PipelineMode != 1 {
+								t.Fatalf("expected pipeline mode 1, got %d", body.PipelineMode)
+							}
+						},
+					},
+					{name: "version method not allowed", method: http.MethodPost, path: "/version", want: http.StatusMethodNotAllowed},
 					{name: "metrics", method: http.MethodGet, path: "/metrics", want: http.StatusOK},
 					{name: "logs method not allowed", method: http.MethodGet, path: "/logs", want: http.StatusMethodNotAllowed},
 				}
@@ -113,6 +192,9 @@ func TestBuildApp(t *testing.T) {
 						server.Handler.ServeHTTP(rec, req)
 						if rec.Code != rc.want {
 							t.Fatalf("unexpected status for %s %s: got=%d want=%d", rc.method, rc.path, rec.Code, rc.want)
+						}
+						if rc.check != nil {
+							rc.check(t, rec)
 						}
 					})
 				}

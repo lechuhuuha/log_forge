@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -49,14 +50,40 @@ type AppConfig struct {
 	Consumer config.ConsumerSettings
 }
 
+// BuildInfo contains build-time metadata exposed by the runtime.
+type BuildInfo struct {
+	Version   string
+	Commit    string
+	BuildDate string
+}
+
+func normalizeBuildInfo(info BuildInfo) BuildInfo {
+	if strings.TrimSpace(info.Version) == "" {
+		info.Version = "dev"
+	}
+	if strings.TrimSpace(info.Commit) == "" {
+		info.Commit = "none"
+	}
+	if strings.TrimSpace(info.BuildDate) == "" {
+		info.BuildDate = "unknown"
+	}
+	return info
+}
+
 // App wires together the HTTP server, services, and background workers.
 type App struct {
-	cfg    AppConfig
-	logger loggerpkg.Logger
+	cfg       AppConfig
+	buildInfo BuildInfo
+	logger    loggerpkg.Logger
 }
 
 // NewApp loads file-based configuration and returns a ready-to-run App.
 func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
+	return NewAppWithBuildInfo(cliCfg, logger, BuildInfo{})
+}
+
+// NewAppWithBuildInfo loads file-based configuration and injects build metadata.
+func NewAppWithBuildInfo(cliCfg config.CLIConfig, logger loggerpkg.Logger, buildInfo BuildInfo) (*App, error) {
 	if strings.TrimSpace(cliCfg.ConfigPath) == "" {
 		return nil, errors.New("config file path is required")
 	}
@@ -95,7 +122,7 @@ func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		Consumer:            fileCfg.Consumer,
 	}
 
-	return &App{cfg: appCfg, logger: logger}, nil
+	return &App{cfg: appCfg, buildInfo: normalizeBuildInfo(buildInfo), logger: logger}, nil
 }
 
 // BuildApp assembles services and the HTTP server, returning the server and a cleanup function.
@@ -185,6 +212,25 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 	handler := httpapi.NewHandler(ingestionSvc, a.logger).WithRequestTimeout(a.cfg.RequestTimeout)
 	handler.RegisterRoutes(mux)
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Version      string `json:"version"`
+			Commit       string `json:"commit"`
+			BuildDate    string `json:"buildDate"`
+			PipelineMode int    `json:"pipelineMode"`
+		}{
+			Version:      a.buildInfo.Version,
+			Commit:       a.buildInfo.Commit,
+			BuildDate:    a.buildInfo.BuildDate,
+			PipelineMode: a.cfg.Version,
+		})
+	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
