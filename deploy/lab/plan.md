@@ -1,282 +1,180 @@
-# Manual Implementation Plan (End-to-End, Updated to Current Repo State)
+# Manual Implementation Plan (Dev + Staging/Production Parity)
 
 ## Summary
-You will manually complete the remaining production-lab work in this order:
-1. Finish and validate pinned local infra bootstrap from existing `deploy/lab/*` files.
-2. Implement application hardening (`/ready`, `/version`, API key auth, shutdown safety, storage backend config).
-3. Add MinIO-backed storage implementation and wire it behind config.
-4. Add Helm chart + environment values for staging/production.
-5. Add Argo CD Application manifests.
-6. Add GitHub Actions CI/release/promotion workflows.
-7. Configure secrets and run first release + rollback drill.
+You will run lab delivery in this order:
+1. Bootstrap local cluster infra from pinned `deploy/lab/step2.md` to `deploy/lab/step4.md`.
+2. Deploy three application environments with Argo CD:
+   - `dev`: version 1 + file backend.
+   - `staging`: version 2 + Kafka + MinIO.
+   - `production`: version 2 + Kafka + MinIO.
+3. Keep staging runtime-equivalent to production to reduce promotion risk.
+4. Use release workflow to bump `dev` and `staging` image tags together.
+5. Use manual production promotion workflow for controlled rollout/rollback.
 
-Current truth in repo:
-- `deploy/lab/step2.md`, `deploy/lab/step3.md`, `deploy/lab/step4.md` exist.
-- `deploy/lab/versions.env` exists and pins versions.
-- `deploy/lab/namespaces.yaml` exists.
-- `deploy/argocd/bootstrap/kustomization.yaml` and `deploy/strimzi/bootstrap/kustomization.yaml` exist.
-- Kafka/MinIO/monitoring manifests/values exist.
+Current repo truth:
+- Helm chart is at `deploy/helm/logforge`.
+- Env values are at `deploy/env/dev/values.yaml`, `deploy/env/staging/values.yaml`, and `deploy/env/production/values.yaml`.
+- Argo applications are at:
+  - `deploy/argocd/logforge-dev.yaml`
+  - `deploy/argocd/logforge-staging.yaml`
+  - `deploy/argocd/logforge-production.yaml`
 
 ---
 
-## Important Public API / Interface / Type Changes You Must Implement
-1. Add `GET /ready` endpoint in `cmd/bootstrap/app.go`.
-2. Add `GET /version` endpoint in `cmd/bootstrap/app.go`.
-3. Add API key auth for `POST /logs` in `internal/http/handler.go`.
-4. Extend config in `config/config.go`:
-- `auth.enabled`
-- `auth.headerName`
-- `auth.keys`
-- `storage.backend` (`file|minio`)
-- `storage.minio.endpoint`
-- `storage.minio.bucket`
-- `storage.minio.accessKey`
-- `storage.minio.secretKey`
-- `storage.minio.useSSL`
-- `storage.minio.logsPrefix`
-- `storage.minio.analyticsPrefix`
-5. Keep `repo.Repository` interface unchanged (`SaveBatch` only).
-6. Add MinIO repository implementation in `repo/minio_repo.go`.
-7. Add build metadata exposure (`version`, `commit`, `buildDate`) for `/version` and release tagging.
+## Environment Policy (Source of Truth)
+1. `dev`
+- pipeline version: `1`
+- storage backend: `file`
+- purpose: fast iteration and basic API validation
+- sync policy: Argo auto-sync
+
+2. `staging`
+- pipeline version: `2`
+- storage backend: `minio`
+- Kafka enabled
+- sync policy: Argo auto-sync
+
+3. `production`
+- pipeline version: `2`
+- storage backend: `minio`
+- Kafka enabled
+- sync policy: Argo manual sync
+
+4. Staging/production parity rule
+- Must match runtime topology and behavioral config.
+- Allowed differences only:
+  - namespace and secret names/keys
+  - MinIO bucket names (`logforge-staging`, `logforge-production`)
+  - image tag during promotion window
 
 ---
 
 ## Step-by-Step Manual Execution
 
-## Step 0: Freeze Current Baseline
-1. Stay on `chore/prod-lab-bootstrap`.
-2. Commit the existing `deploy/` files first so infra bootstrap has a checkpoint.
-3. Run baseline checks:
+## Step 1: Bootstrap Cluster and Platform Components
+1. Execute:
+- `deploy/lab/step2.md`
+- `deploy/lab/step3.md`
+- `deploy/lab/step4.md`
+2. Validate core infra:
 ```bash
-go test ./... -count=1
-go test -race ./service ./internal/http ./cmd/bootstrap ./internal/queue
-go vet ./...
-```
-
-## Step 1: Run Pinned Infra Bootstrap Files
-1. Execute Step 2 doc: `deploy/lab/step2.md`.
-2. Execute Step 3 doc: `deploy/lab/step3.md`.
-3. Before Step 4, set a strong value for `stringData.root-password` in `deploy/minio/minio-lab.yaml`.
-4. Execute Step 4 doc: `deploy/lab/step4.md`.
-5. Validate cluster:
-```bash
+kubectl get nodes -o wide
 kubectl get pods -A
 kubectl get pvc -A
 kubectl get kafka -n kafka
 kubectl get kafkatopic -n kafka
 ```
 
-## Step 2: Add Build Metadata Plumbing
-1. Edit `cmd/main.go`.
-2. Add package vars:
-- `Version = "dev"`
-- `Commit = "none"`
-- `BuildDate = "unknown"`
-3. Create `BuildInfo` struct in `cmd/bootstrap/app.go` or a small new package and pass metadata into app wiring.
-4. Ensure metadata is available to `/version`.
-5. Update tests in `cmd/bootstrap/app_test.go` for `/version` response.
-
-## Step 3: Implement `/ready` and `/version` Endpoints
-1. Edit `cmd/bootstrap/app.go`.
-2. Add `/version` handler returning JSON with:
-- `version`
-- `commit`
-- `buildDate`
-- `pipelineMode` (`1` or `2`)
-3. Add `/ready` handler with dependency checks:
-- file backend: verify writable storage path.
-- minio backend: verify bucket reachability.
-- version 2 mode: also verify Kafka connectivity (`CheckConnectivity` with short timeout).
-4. Return `200` when all checks pass, otherwise `503`.
-5. Keep existing `/health` as simple liveness.
-6. Add tests in `cmd/bootstrap/app_test.go` for success/failure readiness cases and version payload.
-
-## Step 4: Implement API Key Auth for `POST /logs`
-1. Edit `internal/http/handler.go`.
-2. Add handler config fields:
-- `authEnabled bool`
-- `authHeader string`
-- `allowedAPIKeys map[string]struct{}`
-3. Add builder method (for example `WithAPIKeyAuth(enabled, header, keys)`).
-4. In `handleLogs`, validate key before reading body.
-5. Return `401` on missing/invalid key.
-6. Do not require auth for `/health`, `/ready`, `/metrics`, `/version`.
-7. Add table-driven tests in `internal/http/handler_test.go`:
-- auth disabled accepts.
-- auth enabled valid key accepts.
-- missing key rejected.
-- wrong key rejected.
-- custom header name works.
-
-## Step 5: Extend Config Schema and Defaults
-1. Edit `config/config.go`.
-2. Add `AuthSettings`, `StorageBackend`, `MinIOSettings` structs.
-3. Extend `Config` struct with `Auth` and MinIO fields under `Storage`.
-4. Apply safe defaults:
-- `auth.enabled = false`
-- `auth.headerName = "X-API-Key"`
-- `storage.backend = "file"`
-- MinIO prefixes default to `logs` and `analytics`
-5. Update YAML examples in `config/examples/*` for new keys (keep backward compatibility).
-6. Add/extend tests in `config/config_test.go` for:
-- default values
-- parsing custom auth header + keys
-- parsing minio backend settings
-- invalid backend handling.
-
-## Step 6: Consumer Shutdown Safety Fix
-1. Edit `service/consumer.go`.
-2. Remove unbounded forced flush behavior.
-3. Ensure both persist and commit operations are bounded by timeout during shutdown.
-4. Keep DLQ write path for persist failures.
-5. Add table-driven tests in `service/consumer_service_test.go`:
-- forced close returns quickly when repo blocks.
-- commit path timeout does not hang.
-- normal flush behavior unchanged.
-
-## Step 7: Add MinIO Repository
-1. Add dependency `github.com/minio/minio-go/v7` in `go.mod`.
-2. Create `repo/minio_repo.go`.
-3. Implement `SaveBatch(ctx, records)` with hour-grouped NDJSON keys matching file layout:
-- `logs/<YYYY-MM-DD>/<HH>.log.json`
-4. Use per-object lock map to avoid concurrent append races in-process.
-5. Add readiness helper method on MinIO repo (bucket exists/reachable).
-6. Add tests in `repo/minio_repo_test.go` with mocked client interfaces:
-- grouped object key behavior
-- append semantics
-- timeout/cancel handling
-- empty batch no-op.
-
-## Step 8: Wire Backend Selection in Bootstrap
-1. Edit `cmd/bootstrap/app.go`.
-2. Instantiate repository by `storage.backend`:
-- `file` -> existing `repo.NewFileRepo`.
-- `minio` -> `repo.NewMinioRepo`.
-3. Wire auth settings into HTTP handler config.
-4. Wire readiness checks according to selected backend + pipeline version.
-5. Extend app bootstrap tests for:
-- file backend startup.
-- minio backend startup.
-- invalid backend fails fast.
-
-## Step 9: Create Helm Chart + Env Values
-1. Add chart at `deploy/helm/logforge`.
-2. Required templates:
-- `deployment.yaml`
-- `service.yaml`
-- `ingress.yaml`
-- `configmap.yaml`
-- `secret.yaml`
-- `serviceaccount.yaml`
-- `pdb.yaml`
-- `networkpolicy.yaml`
-3. Enforce:
-- liveness `/health`
-- readiness `/ready`
-- non-root runtime
-- read-only root fs
-- dropped capabilities
-- resource requests `100m/256Mi`, limits `500m/512Mi`
-4. Add:
-- `deploy/env/staging/values.yaml`
-- `deploy/env/production/values.yaml`
-5. Include env differences:
-- image tag
-- replica count
-- secret refs
-- auth keys ref
-- backend settings.
-
-## Step 10: Add Argo CD Application Manifests
-1. Add `deploy/argocd/logforge-staging.yaml`:
-- auto-sync enabled
-- self-heal enabled
-- target namespace `staging`
-2. Add `deploy/argocd/logforge-production.yaml`:
-- manual sync
-- target namespace `production`
-3. Validate manifests with:
+## Step 2: Apply Argo Applications
+1. Apply all application manifests:
 ```bash
-kubectl apply --dry-run=client -f deploy/argocd/logforge-staging.yaml
-kubectl apply --dry-run=client -f deploy/argocd/logforge-production.yaml
+kubectl apply -f deploy/argocd/logforge-dev.yaml
+kubectl apply -f deploy/argocd/logforge-staging.yaml
+kubectl apply -f deploy/argocd/logforge-production.yaml
+```
+2. Verify:
+```bash
+kubectl -n argocd get application logforge-dev logforge-staging logforge-production
 ```
 
-## Step 11: Add GitHub Workflows
-1. Add `.github/workflows/ci.yml` for PRs:
-- `go test ./...`
-- `go test -race` critical packages
-- `go vet ./...`
-- static analysis
-- Docker build
-- Helm lint/template
-2. Add `.github/workflows/release.yml` for `v*` tags:
-- build image
-- ldflags inject metadata
-- push to GHCR
-- update staging values image tag
-3. Add `.github/workflows/promote-production.yml` manual dispatch:
-- input `version`
-- update production values image tag
-- create PR for approval.
+## Step 3: Configure Runtime Secrets and Pull Secrets
+1. Follow `deploy/lab/step5.md`.
+2. Must exist in `dev`, `staging`, and `production`:
+- runtime secret (`logforge-<env>-runtime`)
+- GHCR pull secret (`ghcr-pull`)
 
-## Step 12: Secrets and Repo Settings
-1. GitHub:
-- enable Actions
-- protect `main`
-- require CI checks + review
-2. GHCR:
-- ensure workflow has package write perms
-3. Cluster secrets:
-- API key secret in `staging`, `production`
-- MinIO creds secret
-- GHCR image pull secret in both namespaces.
+## Step 4: MinIO Readiness and Bucket Preflight
+1. Ensure MinIO pod is healthy:
+```bash
+kubectl -n storage get pods -l app=minio
+```
+2. Ensure buckets exist:
+- `logforge-staging`
+- `logforge-production`
+3. Use `deploy/lab/step6.md` production preflight command if buckets are missing.
 
-## Step 13: Release, Promote, Rollback Run
-1. Tag first release:
+## Step 5: Release Flow (Tag Push)
+1. Tag and push:
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
-2. Verify staging auto-deploy in Argo.
-3. Smoke test:
+2. Expected release workflow behavior:
+- build/push image to GHCR
+- create PR that updates image tags in:
+  - `deploy/env/dev/values.yaml`
+  - `deploy/env/staging/values.yaml`
+
+## Step 6: Merge Dev+Staging Tag Bump PR
+1. Review and merge the PR created by release workflow.
+2. Verify Argo auto-sync:
+```bash
+kubectl -n argocd get application logforge-dev logforge-staging
+```
+
+## Step 7: Smoke Test Staging
+1. Use port-forward workflow from `deploy/lab/step6.md`.
+2. Verify:
 - `GET /health`
 - `GET /ready`
 - `GET /version`
 - authenticated `POST /logs`
-4. Promote to production via workflow.
-5. Rollback drill:
-- change prod image tag to previous
-- sync app
-- verify `/version` reverted.
+
+## Step 8: Promote Production (Manual Gate)
+1. Trigger promotion workflow:
+```bash
+gh workflow run promote-production.yml -f version=v0.1.0
+```
+2. Merge production promotion PR.
+3. Perform manual sync for `logforge-production` in Argo (policy-controlled).
+
+## Step 9: Rollback Drill
+1. Trigger promotion workflow using previous version (example):
+```bash
+gh workflow run promote-production.yml -f version=v0.0.9
+```
+2. Merge rollback PR.
+3. Sync production and verify `/version` reverted.
 
 ---
 
-## Test Cases and Scenarios (Completion Gate)
-1. Unit:
-- config defaults/parsing for new auth/storage fields.
-- API key auth matrix.
-- `/ready` pass/fail for file/minio and v1/v2.
-- `/version` metadata shape/values.
-- consumer forced shutdown timeout.
-- minio repo batch grouping/append.
-2. Integration:
-- ingest -> Kafka -> persistence -> aggregation path.
-- readiness fails when Kafka unavailable in v2.
-- invalid API key returns `401`.
-3. Deployment:
-- Helm template render success for both env files.
-- Argo staging auto-sync applies tagged image.
-- production manual promotion uses exact tag.
-4. Operability:
-- rollback to previous tag within 10 minutes.
-- no shutdown hang during rolling restart.
+## Validation Gate
+1. Helm render:
+```bash
+helm template logforge-dev deploy/helm/logforge -f deploy/env/dev/values.yaml >/tmp/logforge-dev.yaml
+helm template logforge-staging deploy/helm/logforge -f deploy/env/staging/values.yaml >/tmp/logforge-staging.yaml
+helm template logforge-production deploy/helm/logforge -f deploy/env/production/values.yaml >/tmp/logforge-production.yaml
+```
+
+2. Argo manifest dry-run:
+```bash
+kubectl apply --dry-run=client -f deploy/argocd/logforge-dev.yaml
+kubectl apply --dry-run=client -f deploy/argocd/logforge-staging.yaml
+kubectl apply --dry-run=client -f deploy/argocd/logforge-production.yaml
+```
+
+3. Application status:
+```bash
+kubectl -n argocd get application logforge-dev logforge-staging logforge-production
+```
+
+4. Endpoint checks (port-forward based):
+- dev `/health`, `/ready`, `/version`
+- staging `/health`, `/ready`, `/version`
+
+5. Workflow checks:
+- release workflow updates dev+staging values in one PR
+- production promote workflow updates only production values
+
+6. MinIO checks:
+- MinIO pod ready
+- `logforge-staging` and `logforge-production` buckets exist
 
 ---
 
 ## Explicit Assumptions and Defaults
-1. You will run this in single-node `k3d` lab mode, not HA production.
-2. `deploy/lab/versions.env` is the source of truth for pinned versions.
-3. Kafka CR validation requires Strimzi CRDs first.
-4. MinIO credentials are provided via Kubernetes secret, not hardcoded.
-5. Aggregation behavior must remain functionally equivalent after backend wiring.
-6. Existing table-driven test style remains mandatory for new tests.
+1. `dev` remains version 1 + file backend.
+2. `staging` and `production` remain version 2 + Kafka + MinIO.
+3. Staging/production parity excludes only env-specific identifiers and temporary promotion tag drift.
+4. Local endpoint access standard is `kubectl port-forward` unless ingress is explicitly introduced.
+5. `deploy/lab/versions.env` is the source of pinned infra versions.

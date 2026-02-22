@@ -71,7 +71,7 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
 
-  update-staging-values:
+  update-dev-and-staging-values:
     runs-on: ubuntu-latest
     needs: build-and-publish
     steps:
@@ -80,20 +80,21 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Update staging image tag
+      - name: Update dev and staging image tags
         run: |
+          sed -i -E "s|^([[:space:]]*tag:[[:space:]]*).*$|\\1${GITHUB_REF_NAME}|" deploy/env/dev/values.yaml
           sed -i -E "s|^([[:space:]]*tag:[[:space:]]*).*$|\\1${GITHUB_REF_NAME}|" deploy/env/staging/values.yaml
 
-      - name: Create PR for staging tag update
+      - name: Create PR for dev and staging tag update
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: chore/staging-image-${{ github.ref_name }}
+          branch: chore/dev-staging-image-${{ github.ref_name }}
           delete-branch: true
-          commit-message: "chore: bump staging image to ${{ github.ref_name }}"
-          title: "chore: bump staging image to ${{ github.ref_name }}"
+          commit-message: "chore: bump dev and staging image to ${{ github.ref_name }}"
+          title: "chore: bump dev and staging image to ${{ github.ref_name }}"
           body: |
-            Update staging image tag after release `${{ github.ref_name }}`.
+            Update dev and staging image tags after release `${{ github.ref_name }}`.
 
             Image: `${{ needs.build-and-publish.outputs.image_repo }}:${{ needs.build-and-publish.outputs.image_tag }}`
           base: ${{ github.event.repository.default_branch }}

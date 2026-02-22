@@ -1,11 +1,11 @@
-# Step 5 (secrets and repo settings for staging/production)
+# Step 5 (secrets and repo settings for dev/staging/production)
 
 This step maps to `deploy/lab/plan.md` Step 12.
 
 ## 0) Preconditions
 
 - Argo CD and namespaces are already installed.
-- Helm values from `deploy/env/staging/values.yaml` and `deploy/env/production/values.yaml` are in use.
+- Helm values from `deploy/env/dev/values.yaml`, `deploy/env/staging/values.yaml`, and `deploy/env/production/values.yaml` are in use.
 
 ## 1) GitHub repository settings checklist
 
@@ -47,6 +47,12 @@ Update placeholder values before using in non-lab environments.
 Option B (CLI, no file edits):
 
 ```bash
+kubectl -n dev create secret generic logforge-dev-runtime \
+  --from-literal=dev_auth_keys_json='["CHANGE_ME_DEV_API_KEY"]' \
+  --from-literal=dev_minio_access_key='CHANGE_ME_DEV_MINIO_ACCESS_KEY' \
+  --from-literal=dev_minio_secret_key='CHANGE_ME_DEV_MINIO_SECRET_KEY' \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl -n staging create secret generic logforge-staging-runtime \
   --from-literal=auth_keys_json='["CHANGE_ME_STAGING_API_KEY"]' \
   --from-literal=minio_access_key='CHANGE_ME_STAGING_MINIO_ACCESS_KEY' \
@@ -60,7 +66,7 @@ kubectl -n production create secret generic logforge-production-runtime \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-## 4) Create GHCR image pull secret in both namespaces
+## 4) Create GHCR image pull secret in all namespaces
 
 Set your GHCR credentials in shell first:
 
@@ -73,6 +79,13 @@ export GHCR_EMAIL="CHANGE_ME@example.com"
 Then create pull secret `ghcr-pull`:
 
 ```bash
+kubectl -n dev create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username="${GHCR_USERNAME}" \
+  --docker-password="${GHCR_TOKEN}" \
+  --docker-email="${GHCR_EMAIL}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl -n staging create secret docker-registry ghcr-pull \
   --docker-server=ghcr.io \
   --docker-username="${GHCR_USERNAME}" \
@@ -91,6 +104,7 @@ kubectl -n production create secret docker-registry ghcr-pull \
 ## 5) Verify
 
 ```bash
+kubectl get secret -n dev logforge-dev-runtime ghcr-pull
 kubectl get secret -n staging logforge-staging-runtime ghcr-pull
 kubectl get secret -n production logforge-production-runtime ghcr-pull
 ```
