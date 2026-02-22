@@ -42,6 +42,9 @@ spec:
     spec:
       securityContext:
         fsGroup: 1001
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: minio
           image: bitnamilegacy/minio:2025.7.23-debian-12-r5
@@ -66,11 +69,13 @@ spec:
                   name: minio-root-creds
                   key: root-password
             - name: MINIO_DEFAULT_BUCKETS
-              value: logs,analytics
+              value: logs,analytics,logforge-staging,logforge-production
             - name: MINIO_API_PORT_NUMBER
               value: "9000"
             - name: MINIO_CONSOLE_PORT_NUMBER
               value: "9001"
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
           livenessProbe:
             httpGet:
               path: /minio/health/live
@@ -93,6 +98,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /bitnami/minio/data
+            - name: tmp
+              mountPath: /opt/bitnami/minio/tmp
   volumeClaimTemplates:
     - metadata:
         name: data

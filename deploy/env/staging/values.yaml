@@ -1,7 +1,7 @@
-replicaCount: 1
+replicaCount: 3
 
 image:
-  tag: v0.1.0-rc1
+  tag: v0.1.0
 
 imagePullSecrets:
   - name: ghcr-pull
@@ -20,9 +20,15 @@ config:
     enabled: true
     headerName: X-API-Key
   storage:
-    backend: file
+    backend: minio
     logsDir: /var/lib/logforge/logs
     analyticsDir: /var/lib/logforge/analytics
+    minio:
+      endpoint: minio.minio.svc.cluster.local:9000
+      bucket: logforge-staging
+      useSSL: false
+      logsPrefix: logs
+      analyticsPrefix: analytics
   kafka:
     brokers:
       - kafka.kafka.svc.cluster.local:9092

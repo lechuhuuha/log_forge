@@ -27,5 +27,5 @@ kubectl get nodes -o wide
 
 ```bash
 kubectl apply -f deploy/kubectl/namespaces.yaml
-kubectl get ns argocd ingress-nginx kafka storage monitoring staging production
+kubectl get ns argocd ingress-nginx kafka storage monitoring dev staging production
 ```
