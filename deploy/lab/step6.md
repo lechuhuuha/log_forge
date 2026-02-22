@@ -63,6 +63,17 @@ Notes:
 - `http://127.0.0.1:18082` only works while the port-forward process is running.
 - If `18082` is busy, use another local port (for example `28082:8082`) and update `LOGFORGE_BASE_URL`.
 
+Environment URLs:
+
+- In-cluster service DNS:
+  - dev: `http://logforge-dev.dev.svc.cluster.local:8082`
+  - staging: `http://logforge-staging.staging.svc.cluster.local:8082`
+  - production: `http://logforge-production.production.svc.cluster.local:8082`
+- Local access (port-forward examples):
+  - dev: `kubectl -n dev port-forward svc/logforge-dev 28081:8082` then open `http://127.0.0.1:28081`
+  - staging: `kubectl -n staging port-forward svc/logforge-staging 28082:8082` then open `http://127.0.0.1:28082`
+  - production: `kubectl -n production port-forward svc/logforge-production 28083:8082` then open `http://127.0.0.1:28083`
+
 ## 4) Production preflight (MinIO + buckets)
 
 Before promoting, verify MinIO is healthy and both v2 buckets exist:
@@ -72,6 +83,18 @@ kubectl -n storage get pods -l app=minio
 
 export MINIO_USER="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-user}' | base64 -d)"
 export MINIO_PASS="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-password}' | base64 -d)"
+
+# Verify runtime secrets use the same MinIO credentials in all environments.
+for ns in dev staging production; do
+  case "$ns" in
+    dev) s=logforge-dev-runtime; ak=dev_minio_access_key; sk=dev_minio_secret_key;;
+    staging) s=logforge-staging-runtime; ak=minio_access_key; sk=minio_secret_key;;
+    production) s=logforge-production-runtime; ak=production_minio_access_key; sk=production_minio_secret_key;;
+  esac
+  ACCESS="$(kubectl -n "$ns" get secret "$s" -o jsonpath="{.data.$ak}" | base64 -d)"
+  SECRET="$(kubectl -n "$ns" get secret "$s" -o jsonpath="{.data.$sk}" | base64 -d)"
+  [ "$ACCESS" = "$MINIO_USER" ] && [ "$SECRET" = "$MINIO_PASS" ] && echo "$ns: minio creds match" || echo "$ns: minio creds mismatch"
+done
 
 kubectl -n storage run minio-bucket-bootstrap --restart=Never \
   --image=minio/mc:RELEASE.2025-08-13T08-35-41Z \

@@ -42,27 +42,34 @@ Option A (manifest template):
 kubectl apply -f deploy/kubectl/logforge-runtime-secrets.example.yaml
 ```
 
-Update placeholder values before using in non-lab environments.
+Notes:
+
+- In lab, MinIO credentials in `deploy/kubectl/logforge-runtime-secrets.example.yaml` are pre-aligned with `secret/minio-root-creds` in namespace `storage`.
+- API keys remain placeholders and should be replaced.
+- For non-lab usage, rotate MinIO credentials and keep both runtime secrets and `storage/minio-root-creds` aligned.
 
 Option B (CLI, no file edits):
 
 ```bash
+export MINIO_USER="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-user}' | base64 -d)"
+export MINIO_PASS="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-password}' | base64 -d)"
+
 kubectl -n dev create secret generic logforge-dev-runtime \
   --from-literal=dev_auth_keys_json='["CHANGE_ME_DEV_API_KEY"]' \
-  --from-literal=dev_minio_access_key='CHANGE_ME_DEV_MINIO_ACCESS_KEY' \
-  --from-literal=dev_minio_secret_key='CHANGE_ME_DEV_MINIO_SECRET_KEY' \
+  --from-literal=dev_minio_access_key="${MINIO_USER}" \
+  --from-literal=dev_minio_secret_key="${MINIO_PASS}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n staging create secret generic logforge-staging-runtime \
   --from-literal=auth_keys_json='["CHANGE_ME_STAGING_API_KEY"]' \
-  --from-literal=minio_access_key='CHANGE_ME_STAGING_MINIO_ACCESS_KEY' \
-  --from-literal=minio_secret_key='CHANGE_ME_STAGING_MINIO_SECRET_KEY' \
+  --from-literal=minio_access_key="${MINIO_USER}" \
+  --from-literal=minio_secret_key="${MINIO_PASS}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n production create secret generic logforge-production-runtime \
   --from-literal=production_auth_keys_json='["CHANGE_ME_PRODUCTION_API_KEY"]' \
-  --from-literal=production_minio_access_key='CHANGE_ME_PRODUCTION_MINIO_ACCESS_KEY' \
-  --from-literal=production_minio_secret_key='CHANGE_ME_PRODUCTION_MINIO_SECRET_KEY' \
+  --from-literal=production_minio_access_key="${MINIO_USER}" \
+  --from-literal=production_minio_secret_key="${MINIO_PASS}" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
@@ -107,4 +114,18 @@ kubectl -n production create secret docker-registry ghcr-pull \
 kubectl get secret -n dev logforge-dev-runtime ghcr-pull
 kubectl get secret -n staging logforge-staging-runtime ghcr-pull
 kubectl get secret -n production logforge-production-runtime ghcr-pull
+
+export MINIO_USER="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-user}' | base64 -d)"
+export MINIO_PASS="$(kubectl -n storage get secret minio-root-creds -o jsonpath='{.data.root-password}' | base64 -d)"
+
+for ns in dev staging production; do
+  case "$ns" in
+    dev) s=logforge-dev-runtime; ak=dev_minio_access_key; sk=dev_minio_secret_key;;
+    staging) s=logforge-staging-runtime; ak=minio_access_key; sk=minio_secret_key;;
+    production) s=logforge-production-runtime; ak=production_minio_access_key; sk=production_minio_secret_key;;
+  esac
+  ACCESS="$(kubectl -n "$ns" get secret "$s" -o jsonpath="{.data.$ak}" | base64 -d)"
+  SECRET="$(kubectl -n "$ns" get secret "$s" -o jsonpath="{.data.$sk}" | base64 -d)"
+  [ "$ACCESS" = "$MINIO_USER" ] && [ "$SECRET" = "$MINIO_PASS" ] && echo "$ns: minio creds match" || echo "$ns: minio creds mismatch"
+done
 ```
