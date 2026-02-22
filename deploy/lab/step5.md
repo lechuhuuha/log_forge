@@ -23,7 +23,16 @@ The workflows already request:
 - `packages: write` for release workflow.
 - `contents: write` and `pull-requests: write` for update PR workflows.
 
-Make sure repository-level policy allows `GITHUB_TOKEN` to write packages.
+Manually verify these GitHub settings:
+
+- `Settings -> Actions -> General -> Workflow permissions` is set to `Read and write permissions`.
+- `Settings -> Actions -> General -> Workflow permissions` has `Allow GitHub Actions to create and approve pull requests` enabled.
+- `Packages -> ghcr.io/<owner>/log_forge -> Package settings -> Manage Actions access` includes this repository with `Write` access.
+
+Expected result:
+
+- release workflow can push images to `ghcr.io`.
+- promote/release workflows can open PRs for values tag updates.
 
 ## 3) Create application runtime secrets
 
