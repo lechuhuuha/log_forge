@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Unit tests
+        run: go test ./... -count=1
+
+      - name: Race tests
+        run: go test -race ./service ./internal/http ./cmd/bootstrap ./internal/queue
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+  package-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build container image
+        run: docker build -t logforge:ci .
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.1
+
+      - name: Helm lint
+        run: helm lint deploy/helm/logforge
+
+      - name: Helm templates
+        run: |
+          helm template logforge deploy/helm/logforge > /tmp/logforge-default.yaml
+          helm template logforge-staging deploy/helm/logforge -f deploy/env/staging/values.yaml > /tmp/logforge-staging.yaml
+          helm template logforge-production deploy/helm/logforge -f deploy/env/production/values.yaml > /tmp/logforge-production.yaml

@@ -1,12 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd
+ARG BUILD_VERSION=dev
+ARG BUILD_COMMIT=none
+ARG BUILD_DATE=unknown
+ARG LDFLAGS=""
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT} -X main.BuildDate=${BUILD_DATE} ${LDFLAGS}" \
+    -o /app/server ./cmd
 
 FROM alpine:3.18
 WORKDIR /app
