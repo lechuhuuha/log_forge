@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultAuthHeaderName = "X-API-Key"
+
 // CLIConfig captures CLI-provided options for starting the server.
 type CLIConfig struct {
 	// ConfigPath points to the YAML configuration file used at startup.
@@ -35,6 +37,8 @@ type Config struct {
 	Server ServerConfig `yaml:"server"`
 	// Storage configures on-disk destinations for raw logs and analytics summaries.
 	Storage StorageConfig `yaml:"storage"`
+	// Auth controls optional API key authentication for ingestion endpoints.
+	Auth AuthSettings `yaml:"auth"`
 	// Aggregation controls periodic analytics generation.
 	Aggregation AggregationConfig `yaml:"aggregation"`
 	// Ingestion controls producer-side buffering/retry/circuit behavior.
@@ -61,12 +65,54 @@ type ServerConfig struct {
 	RequestTimeout time.Duration `yaml:"requestTimeout"`
 }
 
-// StorageConfig configures directories for raw logs and analytics output.
+// AuthSettings controls API key authentication behavior.
+type AuthSettings struct {
+	// Enabled toggles API key authentication.
+	Enabled bool `yaml:"enabled"`
+	// HeaderName is the request header used to pass API keys.
+	HeaderName string `yaml:"headerName"`
+	// Keys contains accepted API keys.
+	Keys []string `yaml:"keys"`
+}
+
+// StorageBackend identifies storage implementation.
+type StorageBackend string
+
+const (
+	// StorageBackendFile stores records on local filesystem.
+	StorageBackendFile StorageBackend = "file"
+	// StorageBackendMinIO stores records in MinIO-compatible object storage.
+	StorageBackendMinIO StorageBackend = "minio"
+)
+
+// StorageConfig configures storage backend, filesystem directories, and MinIO settings.
 type StorageConfig struct {
+	// Backend selects where logs are persisted.
+	Backend StorageBackend `yaml:"backend"`
 	// LogsDir is the base directory for NDJSON log files.
 	LogsDir string `yaml:"logsDir"`
 	// AnalyticsDir is the base directory for aggregated summary files.
 	AnalyticsDir string `yaml:"analyticsDir"`
+	// MinIO contains object-storage settings used when backend=minio.
+	MinIO MinIOSettings `yaml:"minio"`
+}
+
+// MinIOSettings contains object-storage configuration for the MinIO backend.
+type MinIOSettings struct {
+	// Endpoint is the host:port address of MinIO.
+	Endpoint string `yaml:"endpoint"`
+	// Bucket is the target bucket for persisted records.
+	Bucket string `yaml:"bucket"`
+	// AccessKey is the MinIO access key ID.
+	AccessKey string `yaml:"accessKey"`
+	// SecretKey is the MinIO secret key.
+	SecretKey string `yaml:"secretKey"`
+	// UseSSL enables TLS for MinIO client requests.
+	UseSSL bool `yaml:"useSSL"`
+	// LogsPrefix is the object key prefix for raw log files.
+	LogsPrefix string `yaml:"logsPrefix"`
+	// AnalyticsPrefix is the object key prefix for aggregated analytics files.
+	AnalyticsPrefix string `yaml:"analyticsPrefix"`
 }
 
 // AggregationConfig defines the periodic aggregation interval.
@@ -138,6 +184,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -149,18 +198,73 @@ func (c *Config) applyDefaults() {
 		c.Server.Addr = ":8082"
 	}
 	c.Server.applyDefaults()
-	if strings.TrimSpace(c.Storage.LogsDir) == "" {
-		c.Storage.LogsDir = "logs"
-	}
-	if strings.TrimSpace(c.Storage.AnalyticsDir) == "" {
-		c.Storage.AnalyticsDir = "analytics"
-	}
+	c.Storage.applyDefaults()
+	c.Auth.applyDefaults()
 	if strings.TrimSpace(c.Aggregation.Interval) == "" {
 		c.Aggregation.Interval = "1m"
 	}
 	c.Ingestion.applyDefaults()
 	c.Consumer.applyDefaults()
 	c.Kafka.applyDefaults()
+}
+
+func (c *Config) validate() error {
+	if !c.Storage.Backend.IsValid() {
+		return fmt.Errorf("invalid storage backend %q", c.Storage.Backend)
+	}
+	return nil
+}
+
+func (a *AuthSettings) applyDefaults() {
+	a.HeaderName = strings.TrimSpace(a.HeaderName)
+	if a.HeaderName == "" {
+		a.HeaderName = defaultAuthHeaderName
+	}
+	if len(a.Keys) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(a.Keys))
+	for _, key := range a.Keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	a.Keys = keys
+}
+
+func (b StorageBackend) normalized() StorageBackend {
+	return StorageBackend(strings.ToLower(strings.TrimSpace(string(b))))
+}
+
+// IsValid reports whether the storage backend is supported.
+func (b StorageBackend) IsValid() bool {
+	switch b.normalized() {
+	case StorageBackendFile, StorageBackendMinIO:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *StorageConfig) applyDefaults() {
+	s.Backend = s.Backend.normalized()
+	if s.Backend == "" {
+		s.Backend = StorageBackendFile
+	}
+	if strings.TrimSpace(s.LogsDir) == "" {
+		s.LogsDir = "logs"
+	}
+	if strings.TrimSpace(s.AnalyticsDir) == "" {
+		s.AnalyticsDir = "analytics"
+	}
+	if strings.TrimSpace(s.MinIO.LogsPrefix) == "" {
+		s.MinIO.LogsPrefix = "logs"
+	}
+	if strings.TrimSpace(s.MinIO.AnalyticsPrefix) == "" {
+		s.MinIO.AnalyticsPrefix = "analytics"
+	}
 }
 
 func (s *ServerConfig) applyDefaults() {

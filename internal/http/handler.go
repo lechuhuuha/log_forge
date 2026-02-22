@@ -22,6 +22,7 @@ const (
 	maxRequestBodyBytes   = 2 << 20 // 2 MiB
 	defaultRequestTimeout = 5 * time.Second
 	transientLogInterval  = 5 * time.Second
+	defaultAuthHeaderName = "X-API-Key"
 )
 
 var errUnsupportedContentType = errors.New("unsupported content-type")
@@ -31,6 +32,9 @@ type Handler struct {
 	ingestion          *service.IngestionService
 	logger             loggerpkg.Logger
 	requestTimeout     time.Duration
+	authEnabled        bool
+	authHeader         string
+	allowedAPIKeys     map[string]struct{}
 	lastTransientLogNs atomic.Int64
 }
 
@@ -43,6 +47,8 @@ func NewHandler(ingestion *service.IngestionService, logr loggerpkg.Logger) *Han
 		ingestion:      ingestion,
 		logger:         logr,
 		requestTimeout: defaultRequestTimeout,
+		authHeader:     defaultAuthHeaderName,
+		allowedAPIKeys: map[string]struct{}{},
 	}
 }
 
@@ -57,6 +63,46 @@ func (h *Handler) WithRequestTimeout(timeout time.Duration) *Handler {
 	return h
 }
 
+// WithAPIKeyAuth enables optional API key auth for POST /logs.
+func (h *Handler) WithAPIKeyAuth(enabled bool, header string, keys []string) *Handler {
+	if h == nil {
+		return h
+	}
+	h.authEnabled = enabled
+	header = strings.TrimSpace(header)
+	if header != "" {
+		h.authHeader = http.CanonicalHeaderKey(header)
+	} else if strings.TrimSpace(h.authHeader) == "" {
+		h.authHeader = defaultAuthHeaderName
+	}
+	allowed := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		allowed[key] = struct{}{}
+	}
+	h.allowedAPIKeys = allowed
+	return h
+}
+
+func (h *Handler) authorizeLogsRequest(r *http.Request) bool {
+	if !h.authEnabled {
+		return true
+	}
+	headerName := strings.TrimSpace(h.authHeader)
+	if headerName == "" {
+		headerName = defaultAuthHeaderName
+	}
+	key := strings.TrimSpace(r.Header.Get(headerName))
+	if key == "" {
+		return false
+	}
+	_, ok := h.allowedAPIKeys[key]
+	return ok
+}
+
 // RegisterRoutes attaches the HTTP endpoints to the provided mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logs", h.handleLogs)
@@ -66,6 +112,10 @@ func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.authorizeLogsRequest(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
