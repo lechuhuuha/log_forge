@@ -90,7 +90,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/staging-image-${{ github.ref_name }}
           delete-branch: true
-          commit-message: chore: bump staging image to ${{ github.ref_name }}
+          commit-message: "chore: bump staging image to ${{ github.ref_name }}"
           title: "chore: bump staging image to ${{ github.ref_name }}"
           body: |
             Update staging image tag after release `${{ github.ref_name }}`.
