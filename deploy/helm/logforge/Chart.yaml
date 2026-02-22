@@ -1,0 +1,6 @@
+apiVersion: v2
+name: logforge
+description: Helm chart for logforge service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,31 @@
+replicaCount: 3
+
+image:
+  tag: v0.1.0
+
+secrets:
+  create: false
+  existingSecret: logforge-production-runtime
+  keys:
+    authKeysJSON: production_auth_keys_json
+    minioAccessKey: production_minio_access_key
+    minioSecretKey: production_minio_secret_key
+
+config:
+  version: 2
+  auth:
+    enabled: true
+    headerName: X-API-Key
+  storage:
+    backend: minio
+    logsDir: /var/lib/logforge/logs
+    analyticsDir: /var/lib/logforge/analytics
+    minio:
+      endpoint: minio.minio.svc.cluster.local:9000
+      bucket: logforge-production
+      useSSL: false
+      logsPrefix: logs
+      analyticsPrefix: analytics
+  kafka:
+    brokers:
+      - kafka.kafka.svc.cluster.local:9092

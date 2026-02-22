@@ -1,0 +1,149 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/lechuhuuha/log_forge
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+envFrom: []
+extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+initContainer:
+  image: alpine:3.20
+  pullPolicy: IfNotPresent
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    capabilities:
+      drop:
+        - ALL
+
+service:
+  type: ClusterIP
+  port: 8082
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: logforge.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  allowAllIngress: true
+  allowAllEgress: true
+  ingress: []
+  egress: []
+
+secrets:
+  create: true
+  existingSecret: ""
+  name: ""
+  keys:
+    authKeysJSON: auth_keys_json
+    minioAccessKey: minio_access_key
+    minioSecretKey: minio_secret_key
+  values:
+    authKeysJSON: "[]"
+    minioAccessKey: "minioadmin"
+    minioSecretKey: "minioadmin"
+
+config:
+  version: 2
+  server:
+    readHeaderTimeout: 2s
+    readTimeout: 10s
+    writeTimeout: 10s
+    idleTimeout: 60s
+    requestTimeout: 5s
+  auth:
+    enabled: false
+    headerName: X-API-Key
+  storage:
+    backend: file
+    logsDir: /var/lib/logforge/logs
+    analyticsDir: /var/lib/logforge/analytics
+    minio:
+      endpoint: minio.minio.svc.cluster.local:9000
+      bucket: logforge
+      useSSL: false
+      logsPrefix: logs
+      analyticsPrefix: analytics
+  aggregation:
+    interval: 30s
+  ingestion:
+    queueBufferSize: 100000
+    producerWorkers: 48
+    producerWriteTimeout: 5s
+    queueHighWaterPercent: 0.98
+    syncOnIngest: true
+    circuitFailureThreshold: 3
+    circuitCooldown: 15s
+  consumer:
+    flushSize: 4096
+    flushInterval: 100ms
+    persistTimeout: 5s
+  kafka:
+    brokers:
+      - kafka.kafka.svc.cluster.local:9092
+    topic: logs
+    groupID: logs-consumer-group
+    batchSize: 5000
+    batchTimeout: 5ms
+    consumers: 10
+    requireAllAcks: true
+    batchBytes: 2000000
+    compression: none
+    async: false
