@@ -3,6 +3,9 @@ replicaCount: 1
 image:
   tag: v0.1.0-rc1
 
+imagePullSecrets:
+  - name: ghcr-pull
+
 secrets:
   create: false
   existingSecret: logforge-staging-runtime
