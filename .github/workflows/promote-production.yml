@@ -1,0 +1,49 @@
+name: promote-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to promote (for example: v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Validate version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+            echo "Invalid version: $VERSION"
+            exit 1
+          fi
+
+      - name: Update production image tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sed -i -E "s|^([[:space:]]*tag:[[:space:]]*).*$|\\1${VERSION}|" deploy/env/production/values.yaml
+
+      - name: Create PR for production promotion
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/promote-production-${{ inputs.version }}
+          delete-branch: true
+          commit-message: "chore: promote production image to ${{ inputs.version }}"
+          title: "chore: promote production image to ${{ inputs.version }}"
+          body: |
+            Promote production deployment to `${{ inputs.version }}`.
+          base: ${{ github.event.repository.default_branch }}

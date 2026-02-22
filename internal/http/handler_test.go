@@ -227,6 +227,86 @@ func TestHandleLogs(t *testing.T) {
 	}
 }
 
+func TestHandleLogsAPIKeyAuth(t *testing.T) {
+	body := `[{"timestamp":"2023-01-02T03:04:05Z","path":"/x","userAgent":"ua"}]`
+	cases := []struct {
+		name          string
+		enabled       bool
+		header        string
+		keys          []string
+		requestHeader string
+		requestValue  string
+		wantStatus    int
+		wantCalls     int
+	}{
+		{
+			name:       "auth disabled accepts request",
+			enabled:    false,
+			wantStatus: http.StatusAccepted,
+			wantCalls:  1,
+		},
+		{
+			name:          "auth enabled valid key accepts request",
+			enabled:       true,
+			keys:          []string{"valid-key"},
+			requestHeader: defaultAuthHeaderName,
+			requestValue:  "valid-key",
+			wantStatus:    http.StatusAccepted,
+			wantCalls:     1,
+		},
+		{
+			name:       "auth enabled missing key rejects request",
+			enabled:    true,
+			keys:       []string{"valid-key"},
+			wantStatus: http.StatusUnauthorized,
+			wantCalls:  0,
+		},
+		{
+			name:          "auth enabled wrong key rejects request",
+			enabled:       true,
+			keys:          []string{"valid-key"},
+			requestHeader: defaultAuthHeaderName,
+			requestValue:  "wrong-key",
+			wantStatus:    http.StatusUnauthorized,
+			wantCalls:     0,
+		},
+		{
+			name:          "custom header name accepts valid key",
+			enabled:       true,
+			header:        "X-LogForge-Key",
+			keys:          []string{"custom-key"},
+			requestHeader: "X-LogForge-Key",
+			requestValue:  "custom-key",
+			wantStatus:    http.StatusAccepted,
+			wantCalls:     1,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockStore{}
+			handler := newHandlerWithStore(store).WithAPIKeyAuth(tc.enabled, tc.header, tc.keys)
+
+			req := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.requestHeader != "" {
+				req.Header.Set(tc.requestHeader, tc.requestValue)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.handleLogs(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d", tc.wantStatus, rec.Code)
+			}
+			if store.callCount != tc.wantCalls {
+				t.Fatalf("expected SaveBatch call count %d, got %d", tc.wantCalls, store.callCount)
+			}
+		})
+	}
+}
+
 type errProducer struct {
 	err error
 }

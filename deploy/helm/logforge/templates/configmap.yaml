@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "logforge.fullname" . }}-scripts
+  labels:
+    {{- include "logforge.labels" . | nindent 4 }}
+data:
+  render-config.sh: |
+    #!/bin/sh
+    set -eu
+
+    cat > /generated/config.yaml <<CFG
+    version: {{ int .Values.config.version }}
+    server:
+      addr: ":{{ .Values.service.port }}"
+      readHeaderTimeout: {{ .Values.config.server.readHeaderTimeout | quote }}
+      readTimeout: {{ .Values.config.server.readTimeout | quote }}
+      writeTimeout: {{ .Values.config.server.writeTimeout | quote }}
+      idleTimeout: {{ .Values.config.server.idleTimeout | quote }}
+      requestTimeout: {{ .Values.config.server.requestTimeout | quote }}
+    auth:
+      enabled: {{ .Values.config.auth.enabled }}
+      headerName: {{ .Values.config.auth.headerName | quote }}
+      keys: ${LOGFORGE_AUTH_KEYS_JSON:-[]}
+    storage:
+      backend: {{ .Values.config.storage.backend | quote }}
+      logsDir: {{ .Values.config.storage.logsDir | quote }}
+      analyticsDir: {{ .Values.config.storage.analyticsDir | quote }}
+      minio:
+        endpoint: {{ .Values.config.storage.minio.endpoint | quote }}
+        bucket: {{ .Values.config.storage.minio.bucket | quote }}
+        accessKey: "${LOGFORGE_MINIO_ACCESS_KEY:-}"
+        secretKey: "${LOGFORGE_MINIO_SECRET_KEY:-}"
+        useSSL: {{ .Values.config.storage.minio.useSSL }}
+        logsPrefix: {{ .Values.config.storage.minio.logsPrefix | quote }}
+        analyticsPrefix: {{ .Values.config.storage.minio.analyticsPrefix | quote }}
+    aggregation:
+      interval: {{ .Values.config.aggregation.interval | quote }}
+    ingestion:
+      queueBufferSize: {{ int .Values.config.ingestion.queueBufferSize }}
+      producerWorkers: {{ int .Values.config.ingestion.producerWorkers }}
+      producerWriteTimeout: {{ .Values.config.ingestion.producerWriteTimeout | quote }}
+      queueHighWaterPercent: {{ .Values.config.ingestion.queueHighWaterPercent }}
+      syncOnIngest: {{ .Values.config.ingestion.syncOnIngest }}
+      circuitFailureThreshold: {{ int .Values.config.ingestion.circuitFailureThreshold }}
+      circuitCooldown: {{ .Values.config.ingestion.circuitCooldown | quote }}
+    consumer:
+      flushSize: {{ int .Values.config.consumer.flushSize }}
+      flushInterval: {{ .Values.config.consumer.flushInterval | quote }}
+      persistTimeout: {{ .Values.config.consumer.persistTimeout | quote }}
+    kafka:
+      brokers: {{ .Values.config.kafka.brokers | toJson }}
+      topic: {{ .Values.config.kafka.topic | quote }}
+      groupID: {{ .Values.config.kafka.groupID | quote }}
+      batchSize: {{ int .Values.config.kafka.batchSize }}
+      batchTimeout: {{ .Values.config.kafka.batchTimeout | quote }}
+      consumers: {{ int .Values.config.kafka.consumers }}
+      requireAllAcks: {{ .Values.config.kafka.requireAllAcks }}
+      batchBytes: {{ int .Values.config.kafka.batchBytes }}
+      compression: {{ .Values.config.kafka.compression | quote }}
+      async: {{ .Values.config.kafka.async }}
+    CFG

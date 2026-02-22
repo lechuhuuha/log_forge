@@ -1,9 +1,22 @@
 version: 1
 server:
   addr: ":8082"
+auth:
+  enabled: false
+  headerName: "X-API-Key"
+  keys: []
 storage:
+  backend: file
   logsDir: "/data/v1/logs"
   analyticsDir: "/data/v1/analytics"
+  minio:
+    endpoint: "minio.storage.svc.cluster.local:9000"
+    bucket: "logforge"
+    accessKey: ""
+    secretKey: ""
+    useSSL: false
+    logsPrefix: "logs"
+    analyticsPrefix: "analytics"
 aggregation:
   interval: 30s
 kafka:

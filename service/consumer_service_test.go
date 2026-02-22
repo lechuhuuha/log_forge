@@ -18,6 +18,11 @@ type consumerRepoStub struct {
 	err     error
 }
 
+type consumerBlockingRepoStub struct {
+	wait  time.Duration
+	calls atomic.Int32
+}
+
 func (r *consumerRepoStub) SaveBatch(ctx context.Context, records []model.LogRecord) error {
 	if r.err != nil {
 		return r.err
@@ -28,6 +33,19 @@ func (r *consumerRepoStub) SaveBatch(ctx context.Context, records []model.LogRec
 	copy(cp, records)
 	r.batches = append(r.batches, cp)
 	return nil
+}
+
+func (r *consumerBlockingRepoStub) SaveBatch(ctx context.Context, records []model.LogRecord) error {
+	r.calls.Add(1)
+	if r.wait <= 0 {
+		r.wait = time.Second
+	}
+	select {
+	case <-time.After(r.wait):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type consumerQueueStub struct {
@@ -199,6 +217,164 @@ func TestConsumerWriter(t *testing.T) {
 				if commitCalls.Load() != 0 {
 					t.Fatalf("expected no commit calls on persist failure, got %d", commitCalls.Load())
 				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tc.run(t)
+		})
+	}
+}
+
+func TestConsumerWriterShutdownBehavior(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "forced close returns quickly when repo blocks",
+			run: func(t *testing.T) {
+				dlqDir := filepath.Join(t.TempDir(), "dlq")
+				repo := &consumerBlockingRepoStub{wait: time.Second}
+				writer := newConsumerWriter(
+					context.Background(),
+					repo,
+					ConsumerBatchConfig{
+						FlushSize:      100,
+						FlushInterval:  time.Hour,
+						PersistTimeout: 25 * time.Millisecond,
+						DLQDir:         dlqDir,
+					},
+					nil,
+				)
+				writer.Add(model.ConsumedMessage{
+					Record: model.LogRecord{
+						Timestamp: time.Now().UTC(),
+						Path:      "/slow-repo",
+						UserAgent: "ua",
+					},
+				})
+
+				start := time.Now()
+				writer.Close()
+				if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+					t.Fatalf("expected Close to return quickly, took %v", elapsed)
+				}
+				if repo.calls.Load() != 1 {
+					t.Fatalf("expected SaveBatch to be called once, got %d", repo.calls.Load())
+				}
+				matches, err := filepath.Glob(filepath.Join(dlqDir, "*", "consumer_*.json"))
+				if err != nil {
+					t.Fatalf("glob dlq: %v", err)
+				}
+				if len(matches) == 0 {
+					t.Fatal("expected DLQ file on timed-out persist")
+				}
+			},
+		},
+		{
+			name: "commit path timeout does not hang",
+			run: func(t *testing.T) {
+				repo := &consumerRepoStub{}
+				var commitCalls atomic.Int32
+				writer := newConsumerWriter(
+					context.Background(),
+					repo,
+					ConsumerBatchConfig{
+						FlushSize:      100,
+						FlushInterval:  time.Hour,
+						PersistTimeout: 25 * time.Millisecond,
+					},
+					nil,
+				)
+				writer.Add(model.ConsumedMessage{
+					Record: model.LogRecord{
+						Timestamp: time.Now().UTC(),
+						Path:      "/slow-commit",
+						UserAgent: "ua",
+					},
+					Commit: func(ctx context.Context) error {
+						commitCalls.Add(1)
+						<-ctx.Done()
+						return ctx.Err()
+					},
+				})
+
+				start := time.Now()
+				writer.Close()
+				if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+					t.Fatalf("expected Close to return quickly, took %v", elapsed)
+				}
+				if commitCalls.Load() != 1 {
+					t.Fatalf("expected one commit call, got %d", commitCalls.Load())
+				}
+				repo.mu.Lock()
+				defer repo.mu.Unlock()
+				if len(repo.batches) != 1 || len(repo.batches[0]) != 1 {
+					t.Fatalf("expected one persisted record, got batches=%d", len(repo.batches))
+				}
+			},
+		},
+		{
+			name: "normal flush behavior unchanged",
+			run: func(t *testing.T) {
+				repo := &consumerRepoStub{}
+				var commitCalls atomic.Int32
+				writer := newConsumerWriter(
+					context.Background(),
+					repo,
+					ConsumerBatchConfig{
+						FlushSize:      2,
+						FlushInterval:  time.Hour,
+						PersistTimeout: time.Second,
+					},
+					nil,
+				)
+
+				writer.Add(model.ConsumedMessage{
+					Record: model.LogRecord{
+						Timestamp: time.Now().UTC(),
+						Path:      "/one",
+						UserAgent: "ua",
+					},
+					Commit: func(context.Context) error {
+						commitCalls.Add(1)
+						return nil
+					},
+				})
+				writer.Add(model.ConsumedMessage{
+					Record: model.LogRecord{
+						Timestamp: time.Now().UTC(),
+						Path:      "/two",
+						UserAgent: "ua",
+					},
+					Commit: func(context.Context) error {
+						commitCalls.Add(1)
+						return nil
+					},
+				})
+
+				repo.mu.Lock()
+				if len(repo.batches) != 1 {
+					repo.mu.Unlock()
+					writer.Close()
+					t.Fatalf("expected one persisted batch, got %d", len(repo.batches))
+				}
+				if len(repo.batches[0]) != 2 {
+					repo.mu.Unlock()
+					writer.Close()
+					t.Fatalf("expected two records in persisted batch, got %d", len(repo.batches[0]))
+				}
+				repo.mu.Unlock()
+				if commitCalls.Load() != 2 {
+					writer.Close()
+					t.Fatalf("expected two commit calls, got %d", commitCalls.Load())
+				}
+
+				writer.Close()
 			},
 		},
 	}

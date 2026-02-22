@@ -1,0 +1,13 @@
+prometheus:
+  prometheusSpec:
+    retention: 48h
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          resources:
+            requests:
+              storage: 3Gi
+
+grafana:
+  persistence:
+    enabled: false

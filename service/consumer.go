@@ -244,7 +244,10 @@ func (w *consumerBatchWriter) persist(batch []model.ConsumedMessage, force bool)
 	metrics.AddLogsIngested(len(batch))
 	for _, msg := range batch {
 		if msg.Commit != nil {
-			if err := msg.Commit(ctx); err != nil {
+			commitCtx, commitCancel := context.WithTimeout(ctx, w.persistTimeout)
+			err := msg.Commit(commitCtx)
+			commitCancel()
+			if err != nil {
 				w.logger.Warn("failed to commit kafka message after persist",
 					loggerpkg.F("error", err),
 					loggerpkg.F("partition", msg.Partition),

@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kafka
+resources:
+  - https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.50.0/strimzi-cluster-operator-0.50.0.yaml
+patches:
+  - target:
+      kind: RoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: RoleBinding
+      name: strimzi-cluster-operator-entity-operator-delegation
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: RoleBinding
+      name: strimzi-cluster-operator-leader-election
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: RoleBinding
+      name: strimzi-cluster-operator-watched
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-broker-delegation
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka
+  - target:
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-client-delegation
+    patch: |-
+      - op: replace
+        path: /subjects/0/namespace
+        value: kafka

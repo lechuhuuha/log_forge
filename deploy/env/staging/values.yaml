@@ -1,0 +1,28 @@
+replicaCount: 1
+
+image:
+  tag: v0.1.0-rc1
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+secrets:
+  create: false
+  existingSecret: logforge-staging-runtime
+  keys:
+    authKeysJSON: auth_keys_json
+    minioAccessKey: minio_access_key
+    minioSecretKey: minio_secret_key
+
+config:
+  version: 2
+  auth:
+    enabled: true
+    headerName: X-API-Key
+  storage:
+    backend: file
+    logsDir: /var/lib/logforge/logs
+    analyticsDir: /var/lib/logforge/analytics
+  kafka:
+    brokers:
+      - kafka.kafka.svc.cluster.local:9092

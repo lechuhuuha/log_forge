@@ -6,9 +6,22 @@ server:
   writeTimeout: 10s
   idleTimeout: 60s
   requestTimeout: 5s
+auth:
+  enabled: false
+  headerName: "X-API-Key"
+  keys: []
 storage:
+  backend: minio
   logsDir: "/data/v2/logs"
   analyticsDir: "/data/v2/analytics"
+  minio:
+    endpoint: "minio:9000"
+    bucket: "logforge"
+    accessKey: "minioadmin"
+    secretKey: "minioadmin"
+    useSSL: false
+    logsPrefix: "logs"
+    analyticsPrefix: "analytics"
 aggregation:
   interval: 30s
 ingestion:

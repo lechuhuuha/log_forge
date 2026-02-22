@@ -2,9 +2,11 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -39,6 +41,12 @@ type AppConfig struct {
 	LogsDir string
 	// AnalyticsDir is the base directory for aggregated summary files.
 	AnalyticsDir string
+	// StorageBackend selects log persistence implementation (file|minio).
+	StorageBackend config.StorageBackend
+	// MinIO contains object-storage settings used when backend=minio.
+	MinIO config.MinIOSettings
+	// Auth contains API key authentication settings for /logs.
+	Auth config.AuthSettings
 	// AggregationInterval controls how often background aggregation runs.
 	AggregationInterval time.Duration
 	// KafkaSettings contains Kafka producer/consumer configuration for v2 mode.
@@ -49,14 +57,82 @@ type AppConfig struct {
 	Consumer config.ConsumerSettings
 }
 
+// BuildInfo contains build-time metadata exposed by the runtime.
+type BuildInfo struct {
+	Version   string
+	Commit    string
+	BuildDate string
+}
+
+func normalizeBuildInfo(info BuildInfo) BuildInfo {
+	if strings.TrimSpace(info.Version) == "" {
+		info.Version = "dev"
+	}
+	if strings.TrimSpace(info.Commit) == "" {
+		info.Commit = "none"
+	}
+	if strings.TrimSpace(info.BuildDate) == "" {
+		info.BuildDate = "unknown"
+	}
+	return info
+}
+
+func checkWritableDir(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("storage path is empty")
+	}
+	info, err := os.Stat(path)
+	if err == nil && !info.IsDir() {
+		return fmt.Errorf("storage path %q is not a directory", path)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat storage path %q: %w", path, err)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("ensure storage directory %q: %w", path, err)
+	}
+	f, err := os.CreateTemp(path, ".ready-*")
+	if err != nil {
+		return fmt.Errorf("create temp file in %q: %w", path, err)
+	}
+	tempPath := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("close temp file in %q: %w", path, err)
+	}
+	if err := os.Remove(tempPath); err != nil {
+		return fmt.Errorf("remove temp file %q: %w", tempPath, err)
+	}
+	return nil
+}
+
+func runReadinessChecks(ctx context.Context, checks ...func(context.Context) error) error {
+	for _, check := range checks {
+		if check == nil {
+			continue
+		}
+		if err := check(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // App wires together the HTTP server, services, and background workers.
 type App struct {
-	cfg    AppConfig
-	logger loggerpkg.Logger
+	cfg       AppConfig
+	buildInfo BuildInfo
+	logger    loggerpkg.Logger
 }
 
 // NewApp loads file-based configuration and returns a ready-to-run App.
 func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
+	return NewAppWithBuildInfo(cliCfg, logger, BuildInfo{})
+}
+
+// NewAppWithBuildInfo loads file-based configuration and injects build metadata.
+func NewAppWithBuildInfo(cliCfg config.CLIConfig, logger loggerpkg.Logger, buildInfo BuildInfo) (*App, error) {
 	if strings.TrimSpace(cliCfg.ConfigPath) == "" {
 		return nil, errors.New("config file path is required")
 	}
@@ -89,13 +165,16 @@ func NewApp(cliCfg config.CLIConfig, logger loggerpkg.Logger) (*App, error) {
 		Version:             fileCfg.Version,
 		LogsDir:             fileCfg.Storage.LogsDir,
 		AnalyticsDir:        fileCfg.Storage.AnalyticsDir,
+		StorageBackend:      fileCfg.Storage.Backend,
+		MinIO:               fileCfg.Storage.MinIO,
+		Auth:                fileCfg.Auth,
 		AggregationInterval: aggInterval,
 		KafkaSettings:       &fileCfg.Kafka,
 		Ingestion:           fileCfg.Ingestion,
 		Consumer:            fileCfg.Consumer,
 	}
 
-	return &App{cfg: appCfg, logger: logger}, nil
+	return &App{cfg: appCfg, buildInfo: normalizeBuildInfo(buildInfo), logger: logger}, nil
 }
 
 // BuildApp assembles services and the HTTP server, returning the server and a cleanup function.
@@ -117,7 +196,38 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		PersistTimeout: a.cfg.Consumer.PersistTimeout,
 	}
 
-	storeRepo := repo.NewFileRepo(a.cfg.LogsDir)
+	var (
+		storeRepo      repo.Repository
+		minioStoreRepo *repo.MinIORepo
+		readyChecks    []func(context.Context) error
+		storageBackend = a.cfg.StorageBackend
+	)
+	if storageBackend == "" {
+		storageBackend = config.StorageBackendFile
+	}
+	readyChecks = append(readyChecks, func(context.Context) error { return checkWritableDir(a.cfg.AnalyticsDir) })
+	switch storageBackend {
+	case config.StorageBackendFile:
+		storeRepo = repo.NewFileRepo(a.cfg.LogsDir)
+		readyChecks = append(readyChecks, func(context.Context) error { return checkWritableDir(a.cfg.LogsDir) })
+	case config.StorageBackendMinIO:
+		minioRepo, err := repo.NewMinIORepo(repo.MinIORepoOptions{
+			Endpoint:   a.cfg.MinIO.Endpoint,
+			Bucket:     a.cfg.MinIO.Bucket,
+			AccessKey:  a.cfg.MinIO.AccessKey,
+			SecretKey:  a.cfg.MinIO.SecretKey,
+			UseSSL:     a.cfg.MinIO.UseSSL,
+			LogsPrefix: a.cfg.MinIO.LogsPrefix,
+		})
+		if err != nil {
+			return nil, runCleanups, fmt.Errorf("configure minio repo: %w", err)
+		}
+		storeRepo = minioRepo
+		minioStoreRepo = minioRepo
+		readyChecks = append(readyChecks, minioRepo.CheckReady)
+	default:
+		return nil, runCleanups, fmt.Errorf("unsupported storage backend %q", storageBackend)
+	}
 	var (
 		mode        service.PipelineMode = service.ModeDirect
 		producerSvc *service.ProducerService
@@ -153,6 +263,7 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		if err := logQueue.CheckConnectivity(checkCtx); err != nil {
 			return nil, runCleanups, fmt.Errorf("kafka startup check: %w", err)
 		}
+		readyChecks = append(readyChecks, logQueue.CheckConnectivity)
 
 		consumerSvc := service.NewConsumerService(logQueue, storeRepo, consumerBatchCfg, a.logger, logQueue.Close)
 		if err := consumerSvc.Start(ctx); err != nil {
@@ -175,16 +286,57 @@ func (a *App) BuildApp(ctx context.Context) (*http.Server, func(), error) {
 		cleanups = append(cleanups, func() { producerSvc.Close() })
 	}
 
-	aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
-	aggSvc.Start(ctx)
+	if minioStoreRepo != nil {
+		minioAggSvc := service.NewMinIOAggregationService(minioStoreRepo, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
+		minioAggSvc.Start(ctx)
+	} else {
+		aggSvc := service.NewAggregationService(a.cfg.LogsDir, a.cfg.AnalyticsDir, a.cfg.AggregationInterval, a.logger)
+		aggSvc.Start(ctx)
+	}
 
 	ingestionSvc := service.NewIngestionService(storeRepo, producerSvc, mode, a.cfg.Ingestion.SyncOnIngest, a.logger)
 	cleanups = append(cleanups, func() { ingestionSvc.Close() })
 
 	mux := http.NewServeMux()
-	handler := httpapi.NewHandler(ingestionSvc, a.logger).WithRequestTimeout(a.cfg.RequestTimeout)
+	handler := httpapi.NewHandler(ingestionSvc, a.logger).
+		WithRequestTimeout(a.cfg.RequestTimeout).
+		WithAPIKeyAuth(a.cfg.Auth.Enabled, a.cfg.Auth.HeaderName, a.cfg.Auth.Keys)
 	handler.RegisterRoutes(mux)
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		readyCtx, cancel := context.WithTimeout(r.Context(), util.KafkaStartupCheckTimeout)
+		defer cancel()
+		if err := runReadinessChecks(readyCtx, readyChecks...); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Version      string `json:"version"`
+			Commit       string `json:"commit"`
+			BuildDate    string `json:"buildDate"`
+			PipelineMode int    `json:"pipelineMode"`
+		}{
+			Version:      a.buildInfo.Version,
+			Commit:       a.buildInfo.Commit,
+			BuildDate:    a.buildInfo.BuildDate,
+			PipelineMode: a.cfg.Version,
+		})
+	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

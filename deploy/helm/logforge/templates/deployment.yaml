@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "logforge.fullname" . }}
+  labels:
+    {{- include "logforge.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "logforge.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "logforge.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "logforge.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: render-config
+          image: {{ .Values.initContainer.image | quote }}
+          imagePullPolicy: {{ .Values.initContainer.pullPolicy }}
+          command:
+            - /bin/sh
+            - /config/render-config.sh
+          securityContext:
+            {{- toYaml .Values.initContainer.securityContext | nindent 12 }}
+          env:
+            - name: LOGFORGE_AUTH_KEYS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "logforge.configSecretName" . }}
+                  key: {{ .Values.secrets.keys.authKeysJSON }}
+            - name: LOGFORGE_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "logforge.configSecretName" . }}
+                  key: {{ .Values.secrets.keys.minioAccessKey }}
+            - name: LOGFORGE_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "logforge.configSecretName" . }}
+                  key: {{ .Values.secrets.keys.minioSecretKey }}
+          volumeMounts:
+            - name: config-renderer
+              mountPath: /config
+              readOnly: true
+            - name: generated-config
+              mountPath: /generated
+      containers:
+        - name: logforge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /app/server
+          args:
+            - -config=/etc/logforge/config.yaml
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: generated-config
+              mountPath: /etc/logforge
+              readOnly: true
+            - name: logs-data
+              mountPath: {{ .Values.config.storage.logsDir | quote }}
+            - name: analytics-data
+              mountPath: {{ .Values.config.storage.analyticsDir | quote }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config-renderer
+          configMap:
+            name: {{ include "logforge.fullname" . }}-scripts
+            defaultMode: 0555
+        - name: generated-config
+          emptyDir: {}
+        - name: logs-data
+          emptyDir: {}
+        - name: analytics-data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

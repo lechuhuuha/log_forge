@@ -1,7 +1,9 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -39,6 +41,26 @@ func TestNewApp(t *testing.T) {
 			errContains: "invalid aggregation interval",
 		},
 		{
+			name: "invalid storage backend",
+			cliCfg: func() config.CLIConfig {
+				return config.CLIConfig{
+					ConfigPath: writeConfigFileWithPathsAndOptions(
+						t,
+						1,
+						"1s",
+						nil,
+						filepath.ToSlash(filepath.Join(t.TempDir(), "logs")),
+						filepath.ToSlash(filepath.Join(t.TempDir(), "analytics")),
+						testConfigOptions{
+							StorageBackend: "invalid",
+						},
+					),
+				}
+			}(),
+			wantErr:     true,
+			errContains: "invalid storage backend",
+		},
+		{
 			name: "loads valid config",
 			cliCfg: func() config.CLIConfig {
 				return config.CLIConfig{ConfigPath: writeConfigFile(t, 1, "1s", nil)}
@@ -49,6 +71,15 @@ func TestNewApp(t *testing.T) {
 				}
 				if app.cfg.Addr != ":8082" {
 					t.Fatalf("expected addr :8082, got %q", app.cfg.Addr)
+				}
+				if app.buildInfo.Version != "dev" {
+					t.Fatalf("expected default build version dev, got %q", app.buildInfo.Version)
+				}
+				if app.buildInfo.Commit != "none" {
+					t.Fatalf("expected default commit none, got %q", app.buildInfo.Commit)
+				}
+				if app.buildInfo.BuildDate != "unknown" {
+					t.Fatalf("expected default build date unknown, got %q", app.buildInfo.BuildDate)
 				}
 			},
 		},
@@ -77,6 +108,50 @@ func TestNewApp(t *testing.T) {
 	}
 }
 
+func TestNewAppWithBuildInfo(t *testing.T) {
+	cases := []struct {
+		name     string
+		build    BuildInfo
+		expected BuildInfo
+	}{
+		{
+			name:     "empty build info uses defaults",
+			build:    BuildInfo{},
+			expected: BuildInfo{Version: "dev", Commit: "none", BuildDate: "unknown"},
+		},
+		{
+			name: "custom build info is preserved",
+			build: BuildInfo{
+				Version:   "v0.1.0",
+				Commit:    "abcd1234",
+				BuildDate: "2026-02-22T00:00:00Z",
+			},
+			expected: BuildInfo{
+				Version:   "v0.1.0",
+				Commit:    "abcd1234",
+				BuildDate: "2026-02-22T00:00:00Z",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			app, err := NewAppWithBuildInfo(
+				config.CLIConfig{ConfigPath: writeConfigFile(t, 1, "1s", nil)},
+				nil,
+				tc.build,
+			)
+			if err != nil {
+				t.Fatalf("NewAppWithBuildInfo returned error: %v", err)
+			}
+			if app.buildInfo != tc.expected {
+				t.Fatalf("unexpected build info: got=%+v want=%+v", app.buildInfo, tc.expected)
+			}
+		})
+	}
+}
+
 func TestBuildApp(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -99,8 +174,35 @@ func TestBuildApp(t *testing.T) {
 					method string
 					path   string
 					want   int
+					check  func(t *testing.T, rec *httptest.ResponseRecorder)
 				}{
 					{name: "health", method: http.MethodGet, path: "/health", want: http.StatusOK},
+					{name: "ready", method: http.MethodGet, path: "/ready", want: http.StatusOK},
+					{name: "ready method not allowed", method: http.MethodPost, path: "/ready", want: http.StatusMethodNotAllowed},
+					{
+						name:   "version",
+						method: http.MethodGet,
+						path:   "/version",
+						want:   http.StatusOK,
+						check: func(t *testing.T, rec *httptest.ResponseRecorder) {
+							var body struct {
+								Version      string `json:"version"`
+								Commit       string `json:"commit"`
+								BuildDate    string `json:"buildDate"`
+								PipelineMode int    `json:"pipelineMode"`
+							}
+							if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+								t.Fatalf("decode /version response: %v", err)
+							}
+							if body.Version != "dev" || body.Commit != "none" || body.BuildDate != "unknown" {
+								t.Fatalf("unexpected /version metadata: %+v", body)
+							}
+							if body.PipelineMode != 1 {
+								t.Fatalf("expected pipeline mode 1, got %d", body.PipelineMode)
+							}
+						},
+					},
+					{name: "version method not allowed", method: http.MethodPost, path: "/version", want: http.StatusMethodNotAllowed},
 					{name: "metrics", method: http.MethodGet, path: "/metrics", want: http.StatusOK},
 					{name: "logs method not allowed", method: http.MethodGet, path: "/logs", want: http.StatusMethodNotAllowed},
 				}
@@ -113,6 +215,9 @@ func TestBuildApp(t *testing.T) {
 						server.Handler.ServeHTTP(rec, req)
 						if rec.Code != rc.want {
 							t.Fatalf("unexpected status for %s %s: got=%d want=%d", rc.method, rc.path, rec.Code, rc.want)
+						}
+						if rc.check != nil {
+							rc.check(t, rec)
 						}
 					})
 				}
@@ -235,10 +340,178 @@ func TestBuildAppVersion2ReachableBroker(t *testing.T) {
 		t.Fatalf("expected /health 200, got %d", rec.Code)
 	}
 
-	cancel()
-	cleanup()
+	readyRec := httptest.NewRecorder()
+	readyReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	server.Handler.ServeHTTP(readyRec, readyReq)
+	if readyRec.Code != http.StatusOK {
+		cancel()
+		cleanup()
+		t.Fatalf("expected /ready 200 while broker reachable, got %d", readyRec.Code)
+	}
+
+	versionRec := httptest.NewRecorder()
+	versionReq := httptest.NewRequest(http.MethodGet, "/version", nil)
+	server.Handler.ServeHTTP(versionRec, versionReq)
+	if versionRec.Code != http.StatusOK {
+		cancel()
+		cleanup()
+		t.Fatalf("expected /version 200, got %d", versionRec.Code)
+	}
+	var versionBody struct {
+		PipelineMode int `json:"pipelineMode"`
+	}
+	if err := json.Unmarshal(versionRec.Body.Bytes(), &versionBody); err != nil {
+		cancel()
+		cleanup()
+		t.Fatalf("decode /version response: %v", err)
+	}
+	if versionBody.PipelineMode != 2 {
+		cancel()
+		cleanup()
+		t.Fatalf("expected /version pipelineMode 2, got %d", versionBody.PipelineMode)
+	}
+
 	_ = listener.Close()
 	<-done
+
+	readyAfterCloseRec := httptest.NewRecorder()
+	readyAfterCloseReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	server.Handler.ServeHTTP(readyAfterCloseRec, readyAfterCloseReq)
+	if readyAfterCloseRec.Code != http.StatusServiceUnavailable {
+		cancel()
+		cleanup()
+		t.Fatalf("expected /ready 503 after broker close, got %d", readyAfterCloseRec.Code)
+	}
+
+	cancel()
+	cleanup()
+}
+
+func TestBuildAppReadyFailsWhenStoragePathIsFile(t *testing.T) {
+	dir := t.TempDir()
+	logsPath := filepath.Join(dir, "logs-file")
+	if err := os.WriteFile(logsPath, []byte("not-a-directory"), 0o644); err != nil {
+		t.Fatalf("write logs path file: %v", err)
+	}
+	cfgPath := writeConfigFileWithPaths(t, 1, "1s", nil, logsPath, filepath.Join(dir, "analytics"))
+	app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("NewApp returned error: %v", err)
+	}
+
+	server, cleanup, err := app.BuildApp(context.Background())
+	if err != nil {
+		t.Fatalf("BuildApp returned error: %v", err)
+	}
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	server.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected /ready 503, got %d", rec.Code)
+	}
+}
+
+func TestBuildAppMinIOStartup(t *testing.T) {
+	cfgPath := writeConfigFileWithPathsAndOptions(
+		t,
+		1,
+		"1s",
+		nil,
+		filepath.ToSlash(filepath.Join(t.TempDir(), "logs")),
+		filepath.ToSlash(filepath.Join(t.TempDir(), "analytics")),
+		testConfigOptions{
+			StorageBackend:  config.StorageBackendMinIO,
+			MinIOEndpoint:   "127.0.0.1:1",
+			MinIOBucket:     "logs-bucket",
+			MinIOAccessKey:  "minio-access",
+			MinIOSecretKey:  "minio-secret",
+			MinIOLogsPrefix: "logs",
+		},
+	)
+	app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("NewApp returned error: %v", err)
+	}
+
+	server, cleanup, err := app.BuildApp(context.Background())
+	if err != nil {
+		t.Fatalf("BuildApp returned error: %v", err)
+	}
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	server.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected /health 200, got %d", rec.Code)
+	}
+}
+
+func TestBuildAppUnsupportedStorageBackend(t *testing.T) {
+	cfgPath := writeConfigFile(t, 1, "1s", nil)
+	app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("NewApp returned error: %v", err)
+	}
+	app.cfg.StorageBackend = config.StorageBackend("unknown")
+
+	_, cleanup, err := app.BuildApp(context.Background())
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatal("expected unsupported storage backend error")
+	}
+	if !strings.Contains(err.Error(), "unsupported storage backend") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildAppAppliesAPIKeyAuthConfig(t *testing.T) {
+	cfgPath := writeConfigFileWithPathsAndOptions(
+		t,
+		1,
+		"1s",
+		nil,
+		filepath.ToSlash(filepath.Join(t.TempDir(), "logs")),
+		filepath.ToSlash(filepath.Join(t.TempDir(), "analytics")),
+		testConfigOptions{
+			AuthEnabled: true,
+			AuthHeader:  "X-Lab-Key",
+			AuthKeys:    []string{"secret-key"},
+		},
+	)
+	app, err := NewApp(config.CLIConfig{ConfigPath: cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("NewApp returned error: %v", err)
+	}
+
+	server, cleanup, err := app.BuildApp(context.Background())
+	if err != nil {
+		t.Fatalf("BuildApp returned error: %v", err)
+	}
+	defer cleanup()
+
+	body := []byte(`[{"timestamp":"2026-02-22T00:00:00Z","path":"/home","userAgent":"ua"}]`)
+
+	unauthorized := httptest.NewRecorder()
+	unauthorizedReq := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewReader(body))
+	unauthorizedReq.Header.Set("Content-Type", "application/json")
+	server.Handler.ServeHTTP(unauthorized, unauthorizedReq)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized /logs status 401, got %d", unauthorized.Code)
+	}
+
+	authorized := httptest.NewRecorder()
+	authorizedReq := httptest.NewRequest(http.MethodPost, "/logs", bytes.NewReader(body))
+	authorizedReq.Header.Set("Content-Type", "application/json")
+	authorizedReq.Header.Set("X-Lab-Key", "secret-key")
+	server.Handler.ServeHTTP(authorized, authorizedReq)
+	if authorized.Code != http.StatusAccepted {
+		t.Fatalf("expected authorized /logs status 202, got %d", authorized.Code)
+	}
 }
 
 func TestRun(t *testing.T) {
@@ -350,11 +623,58 @@ func TestInitWiring(t *testing.T) {
 	}
 }
 
+type testConfigOptions struct {
+	StorageBackend  config.StorageBackend
+	MinIOEndpoint   string
+	MinIOBucket     string
+	MinIOAccessKey  string
+	MinIOSecretKey  string
+	MinIOUseSSL     bool
+	MinIOLogsPrefix string
+	AuthEnabled     bool
+	AuthHeader      string
+	AuthKeys        []string
+}
+
 func writeConfigFile(t *testing.T, version int, interval string, kafkaBrokers []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	logsDir := filepath.ToSlash(filepath.Join(dir, "logs"))
 	analyticsDir := filepath.ToSlash(filepath.Join(dir, "analytics"))
+	return writeConfigFileWithPaths(t, version, interval, kafkaBrokers, logsDir, analyticsDir)
+}
+
+func writeConfigFileWithPaths(
+	t *testing.T,
+	version int,
+	interval string,
+	kafkaBrokers []string,
+	logsDir string,
+	analyticsDir string,
+) string {
+	return writeConfigFileWithPathsAndOptions(t, version, interval, kafkaBrokers, logsDir, analyticsDir, testConfigOptions{})
+}
+
+func writeConfigFileWithPathsAndOptions(
+	t *testing.T,
+	version int,
+	interval string,
+	kafkaBrokers []string,
+	logsDir string,
+	analyticsDir string,
+	opts testConfigOptions,
+) string {
+	t.Helper()
+	cfgDir := t.TempDir()
+
+	backend := opts.StorageBackend
+	if backend == "" {
+		backend = config.StorageBackendFile
+	}
+	authHeader := strings.TrimSpace(opts.AuthHeader)
+	if authHeader == "" {
+		authHeader = "X-API-Key"
+	}
 
 	brokersYAML := "[]"
 	if len(kafkaBrokers) > 0 {
@@ -364,13 +684,33 @@ func writeConfigFile(t *testing.T, version int, interval string, kafkaBrokers []
 		}
 		brokersYAML = "\n    " + strings.Join(parts, "\n    ")
 	}
+	authKeysYAML := "[]"
+	if len(opts.AuthKeys) > 0 {
+		parts := make([]string, 0, len(opts.AuthKeys))
+		for _, key := range opts.AuthKeys {
+			parts = append(parts, fmt.Sprintf("- %q", key))
+		}
+		authKeysYAML = "\n    " + strings.Join(parts, "\n    ")
+	}
 
 	content := fmt.Sprintf(`version: %d
 server:
   addr: ":8082"
 storage:
+  backend: %q
   logsDir: %q
   analyticsDir: %q
+  minio:
+    endpoint: %q
+    bucket: %q
+    accessKey: %q
+    secretKey: %q
+    useSSL: %t
+    logsPrefix: %q
+auth:
+  enabled: %t
+  headerName: %q
+  keys: %s
 aggregation:
   interval: %q
 kafka:
@@ -380,10 +720,25 @@ kafka:
   batchSize: 100
   batchTimeout: 1s
   consumers: 1
-  requireAllAcks: false
-`, version, logsDir, analyticsDir, interval, brokersYAML)
+  requireAllAcks: false`,
+		version,
+		backend,
+		filepath.ToSlash(logsDir),
+		filepath.ToSlash(analyticsDir),
+		opts.MinIOEndpoint,
+		opts.MinIOBucket,
+		opts.MinIOAccessKey,
+		opts.MinIOSecretKey,
+		opts.MinIOUseSSL,
+		opts.MinIOLogsPrefix,
+		opts.AuthEnabled,
+		authHeader,
+		authKeysYAML,
+		interval,
+		brokersYAML,
+	)
 
-	path := filepath.Join(dir, "config.yaml")
+	path := filepath.Join(cfgDir, "config.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
