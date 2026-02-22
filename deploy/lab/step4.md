@@ -2,7 +2,7 @@
 
 Everything here is pinned to explicit versions from `deploy/lab/versions.env`.
 
-## 0) Load pinned versions
+## 0) Load pinned  (No need to do this if step2 load is done)
 
 ```bash
 set -a

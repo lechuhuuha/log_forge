@@ -1,7 +1,9 @@
 # Step 2 (tooling install, pinned)
 
 ## 0) Load pinned versions
-
+You want everything inside .env exported
+But you don’t want the rest of your script auto-exported
+So you enable temporarily, then disable
 ```bash
 set -a
 source deploy/lab/versions.env

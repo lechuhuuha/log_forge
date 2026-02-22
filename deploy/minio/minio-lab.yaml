@@ -6,7 +6,7 @@ metadata:
 type: Opaque
 stringData:
   root-user: minioadmin
-  root-password: CHANGE_ME_MINIO_PASSWORD
+  root-password: 5mpeVdS&KDn3Ks)
 ---
 apiVersion: v1
 kind: Service
