@@ -25,4 +25,4 @@ config:
     analyticsDir: /var/lib/logforge/analytics
   kafka:
     brokers:
-      - kafka.kafka.svc.cluster.local:9092
+      - my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
