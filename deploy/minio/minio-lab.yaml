@@ -74,6 +74,8 @@ spec:
               value: "9000"
             - name: MINIO_CONSOLE_PORT_NUMBER
               value: "9001"
+            - name: HOME
+              value: /tmp
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
           livenessProbe:
@@ -100,6 +102,8 @@ spec:
               mountPath: /bitnami/minio/data
             - name: tmp
               mountPath: /opt/bitnami/minio/tmp
+            - name: tmp
+              mountPath: /tmp
   volumeClaimTemplates:
     - metadata:
         name: data
