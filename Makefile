@@ -10,8 +10,18 @@ PROFILE_UI_PORT_V2 ?= :8086
 PROFILE_UI_PORT_COMPARE ?= :8087
 PROFILE_UI_PORT_HEAP_COMPARE ?= :8088
 PROFILE_UI_PORT_GOROUTINE_COMPARE ?= :8089
+LOADTEST_TOTAL ?= 1000000
+LOADTEST_CONCURRENCY ?= 50
+LOADTEST_PAYLOAD ?= testdata/sample_logs.json
+LOADTEST_DEV_URL ?= http://dev.logforge.local:8080/logs
+LOADTEST_STAGING_URL ?= http://staging.logforge.local:8080/logs
+LOADTEST_PRODUCTION_URL ?= http://production.logforge.local:8080/logs
+LOADTEST_API_KEY ?=
+LOADTEST_DEV_API_KEY ?=
+LOADTEST_STAGING_API_KEY ?=
+LOADTEST_PRODUCTION_API_KEY ?=
 
-.PHONY: build run run-v1 run-v2 capture-profile-v1 capture-profile-v2 profile-run-v1 profile-run-v2 profile-cpu-v1 profile-cpu-v2 profile-heap-v1 profile-heap-v2 profile-goroutine-v1 profile-goroutine-v2 profile-ui-cpu-v1 profile-ui-cpu-v2 profile-ui-cpu-compare profile-ui-heap-compare profile-ui-goroutine-compare test bench race loadtest loadtest-v1 loadtest-v2 stack-up stack-down infra-up infra-down kafka-topic
+.PHONY: build run run-v1 run-v2 capture-profile-v1 capture-profile-v2 profile-run-v1 profile-run-v2 profile-cpu-v1 profile-cpu-v2 profile-heap-v1 profile-heap-v2 profile-goroutine-v1 profile-goroutine-v2 profile-ui-cpu-v1 profile-ui-cpu-v2 profile-ui-cpu-compare profile-ui-heap-compare profile-ui-goroutine-compare test bench race loadtest loadtest-v1 loadtest-v2 loadtest-dev loadtest-staging loadtest-production stack-up stack-down infra-up infra-down kafka-topic
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -154,6 +164,51 @@ loadtest-v2:
 	@if command -v hey >/dev/null 2>&1; then \
 		echo "running load test (version 2) with hey"; \
 		hey -n 1000000 -c 50 -m POST -T "application/json" -d "`cat testdata/sample_logs.json`" http://localhost:8083/logs; \
+	else \
+		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
+	fi
+
+loadtest-dev:
+	@if command -v hey >/dev/null 2>&1; then \
+		key="$(LOADTEST_DEV_API_KEY)"; \
+		if [ -z "$$key" ]; then key="$(LOADTEST_API_KEY)"; fi; \
+		if [ -z "$$key" ]; then \
+			echo "missing API key. set LOADTEST_DEV_API_KEY (or LOADTEST_API_KEY)"; \
+			echo "example: make loadtest-dev LOADTEST_DEV_API_KEY=your-dev-key"; \
+			exit 1; \
+		fi; \
+		echo "running load test (dev) with hey -> $(LOADTEST_DEV_URL)"; \
+		hey -n $(LOADTEST_TOTAL) -c $(LOADTEST_CONCURRENCY) -m POST -T "application/json" -H "X-API-Key: $$key" -d "$$(cat $(LOADTEST_PAYLOAD))" "$(LOADTEST_DEV_URL)"; \
+	else \
+		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
+	fi
+
+loadtest-staging:
+	@if command -v hey >/dev/null 2>&1; then \
+		key="$(LOADTEST_STAGING_API_KEY)"; \
+		if [ -z "$$key" ]; then key="$(LOADTEST_API_KEY)"; fi; \
+		if [ -z "$$key" ]; then \
+			echo "missing API key. set LOADTEST_STAGING_API_KEY (or LOADTEST_API_KEY)"; \
+			echo "example: make loadtest-staging LOADTEST_STAGING_API_KEY=your-staging-key"; \
+			exit 1; \
+		fi; \
+		echo "running load test (staging) with hey -> $(LOADTEST_STAGING_URL)"; \
+		hey -n $(LOADTEST_TOTAL) -c $(LOADTEST_CONCURRENCY) -m POST -T "application/json" -H "X-API-Key: $$key" -d "$$(cat $(LOADTEST_PAYLOAD))" "$(LOADTEST_STAGING_URL)"; \
+	else \
+		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
+	fi
+
+loadtest-production:
+	@if command -v hey >/dev/null 2>&1; then \
+		key="$(LOADTEST_PRODUCTION_API_KEY)"; \
+		if [ -z "$$key" ]; then key="$(LOADTEST_API_KEY)"; fi; \
+		if [ -z "$$key" ]; then \
+			echo "missing API key. set LOADTEST_PRODUCTION_API_KEY (or LOADTEST_API_KEY)"; \
+			echo "example: make loadtest-production LOADTEST_PRODUCTION_API_KEY=your-production-key"; \
+			exit 1; \
+		fi; \
+		echo "running load test (production) with hey -> $(LOADTEST_PRODUCTION_URL)"; \
+		hey -n $(LOADTEST_TOTAL) -c $(LOADTEST_CONCURRENCY) -m POST -T "application/json" -H "X-API-Key: $$key" -d "$$(cat $(LOADTEST_PAYLOAD))" "$(LOADTEST_PRODUCTION_URL)"; \
 	else \
 		echo "hey not installed; install hey (https://github.com/rakyll/hey) to run load tests"; \
 	fi
