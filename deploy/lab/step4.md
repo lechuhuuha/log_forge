@@ -45,6 +45,19 @@ kubectl apply -n kafka -f deploy/kafka/lab-single-broker.yaml
 kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n kafka
 ```
 
+### Pitfall: Strimzi leader-election RBAC
+
+`deploy/strimzi/bootstrap/kustomization.yaml` includes patches that force Strimzi binding subjects to namespace `kafka`.
+
+If the wait command times out and operator logs show `leases.coordination.k8s.io ... forbidden`, re-apply Strimzi bootstrap and restart the operator:
+
+```bash
+kubectl apply -k deploy/strimzi/bootstrap
+kubectl -n kafka rollout restart deployment/strimzi-cluster-operator
+kubectl -n kafka rollout status deployment/strimzi-cluster-operator --timeout=300s
+kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n kafka
+```
+
 ## 5) Create `logs` topic
 
 ```bash
