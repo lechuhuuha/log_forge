@@ -308,7 +308,7 @@ func TestKafkaLogQueue_CheckConnectivitySuccess(t *testing.T) {
 	}
 	q.kafkaDown.Store(true)
 
-	if err := q.CheckConnectivity(nil); err != nil {
+	if err := q.CheckConnectivity(context.TODO()); err != nil {
 		t.Fatalf("CheckConnectivity returned error: %v", err)
 	}
 	if q.kafkaDown.Load() {
