@@ -28,7 +28,15 @@ helm upgrade --install ingress-nginx ingress-nginx \
 
 ```bash
 kubectl apply -n argocd --server-side --force-conflicts -k deploy/argocd/bootstrap
+kubectl -n argocd rollout restart deploy/argocd-server
 kubectl -n argocd rollout status deploy/argocd-server --timeout=300s
+```
+
+Argo CD UI is exposed by ingress at `http://argocd.logforge.local:8080`.
+Add local hosts mapping once:
+
+```bash
+echo "127.0.0.1 argocd.logforge.local" | sudo tee -a /etc/hosts
 ```
 
 ## 3) Install Strimzi operator (pinned release manifest via kustomize)

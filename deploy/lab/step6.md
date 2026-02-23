@@ -40,18 +40,18 @@ kubectl -n argocd describe application logforge-staging
 
 ## 3) Smoke test staging
 
-Ingress hostnames are enabled in env values for all three environments. Add local host mappings once:
+Ingress hostnames are enabled in env values for all three environments and for Argo CD UI. Add local host mappings once:
 
 Linux/macOS (including WSL terminal access):
 
 ```bash
-echo "127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local" | sudo tee -a /etc/hosts
+echo "127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local argocd.logforge.local" | sudo tee -a /etc/hosts
 ```
 
 Windows browser access (when cluster runs in WSL): run PowerShell as Administrator:
 
 ```powershell
-Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local"
+Add-Content -Path "$env:WINDIR\System32\drivers\etc\hosts" -Value "`n127.0.0.1 dev.logforge.local staging.logforge.local production.logforge.local argocd.logforge.local"
 ```
 
 Then run staging checks:
@@ -79,6 +79,7 @@ curl -fsS -H 'Host: staging.logforge.local' http://127.0.0.1:8080/health
 Environment URLs:
 
 - Local ingress URLs:
+  - argocd: `http://argocd.logforge.local:8080`
   - dev: `http://dev.logforge.local:8080`
   - staging: `http://staging.logforge.local:8080`
   - production: `http://production.logforge.local:8080`

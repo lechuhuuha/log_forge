@@ -176,5 +176,5 @@ kubectl -n argocd get application logforge-dev logforge-staging logforge-product
 1. `dev` remains version 1 + file backend.
 2. `staging` and `production` remain version 2 + Kafka + MinIO.
 3. Staging/production parity excludes only env-specific identifiers and temporary promotion tag drift.
-4. Local endpoint access standard is ingress hostnames on port `8080`, with `kubectl port-forward` as fallback.
+4. Local endpoint access standard is ingress hostnames on port `8080` (including Argo CD UI at `argocd.logforge.local`), with `kubectl port-forward` as fallback.
 5. `deploy/lab/versions.env` is the source of pinned infra versions.
